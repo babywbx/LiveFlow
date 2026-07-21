@@ -1,0 +1,75 @@
+{
+  "name": "@babywbx/liveflow",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A browser-side live playback and realtime overlay stack.",
+  "license": "MIT",
+  "author": "Babywbx",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/babywbx/LiveFlow.git"
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./continuity": {
+      "types": "./dist/continuity/index.d.ts",
+      "import": "./dist/continuity/index.js"
+    },
+    "./danmaku": {
+      "types": "./dist/danmaku/index.d.ts",
+      "import": "./dist/danmaku/index.js"
+    },
+    "./danmaku/dom": {
+      "types": "./dist/danmaku/renderers/index.d.ts",
+      "import": "./dist/danmaku/renderers/index.js"
+    },
+    "./overlay": {
+      "types": "./dist/overlay/index.d.ts",
+      "import": "./dist/overlay/index.js"
+    },
+    "./native-video": {
+      "types": "./dist/adapters/native-video.d.ts",
+      "import": "./dist/adapters/native-video.js"
+    },
+    "./artplayer": {
+      "types": "./dist/adapters/artplayer.d.ts",
+      "import": "./dist/adapters/artplayer.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.dev.json --noEmit",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "lint": "oxlint . --deny-warnings --report-unused-disable-directives",
+    "lint:fix": "oxlint . --fix --deny-warnings --report-unused-disable-directives",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:browser": "playwright test",
+    "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm test && pnpm build",
+    "prepare": "pnpm build"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@types/node": "^26.1.1",
+    "oxfmt": "^0.60.0",
+    "oxlint": "^1.75.0",
+    "oxlint-tsgolint": "^7.0.2001",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "packageManager": "pnpm@11.16.0"
+}

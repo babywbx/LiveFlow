@@ -1,0 +1,188 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Format
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Zero Runtime Deps
+        run: |
+          count=$(jq -r '.dependencies // {} | length' package.json)
+          if [ "$count" != "0" ]; then
+            echo "LiveFlow core must have zero runtime dependencies, found $count."
+            exit 1
+          fi
+          if jq -e '[.dependencies // {}, .devDependencies // {}] | add // {}
+                    | to_entries[] | select(.value | test("^(git\\+|github:|https?://)"))' \
+               package.json > /dev/null; then
+            echo "Exotic (git/http) dependency specifiers are not allowed."
+            exit 1
+          fi
+
+      - name: Layering
+        run: |
+          if grep -rnE "from '[^']*adapters/" \
+               src/continuity src/danmaku src/overlay src/shared; then
+            echo "Core engines must not import player adapters."
+            exit 1
+          fi
+          if grep -rnE "from '(artplayer|mpegts\.js)" \
+               src/continuity src/danmaku src/overlay src/shared; then
+            echo "Core engines must not import player runtimes."
+            exit 1
+          fi
+          if grep -rnE "from 'node:" src; then
+            echo "LiveFlow must not import Node.js built-ins."
+            exit 1
+          fi
+          if grep -rnE "from 'react" src; then
+            echo "LiveFlow core must not depend on React."
+            exit 1
+          fi
+
+  test:
+    name: Test / Unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+
+  browser:
+    name: Test / Browser
+    runs-on: ubuntu-latest
+    if: ${{ hashFiles('tests/browser/**/*.spec.ts') != '' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium firefox webkit
+      - run: pnpm test:browser
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Package
+        run: pnpm build
+
+      - name: No Sourcemaps
+        run: |
+          if find dist -name '*.map' -print | grep -q .; then
+            echo "Source maps must never be emitted or distributed."
+            find dist -name '*.map'
+            exit 1
+          fi
+          if grep -rlE 'sourceMappingURL|sourcesContent' dist; then
+            echo "Build output must not reference source maps."
+            exit 1
+          fi
+          if jq -e '.files | index("src")' package.json > /dev/null; then
+            echo "Source files must not be included in the distributed package."
+            exit 1
+          fi
+
+      - name: Dist Committed
+        run: |
+          if [ -n "$(git status --porcelain -- dist)" ]; then
+            echo "dist/ is out of date. Run 'pnpm build' and commit the result."
+            git status --porcelain -- dist
+            exit 1
+          fi
+
+      - name: Size
+        run: |
+          echo "gzip bytes per emitted module (thresholds land in phase 8):"
+          find dist -name '*.js' -print0 \
+            | xargs -0 -I{} sh -c 'printf "%8s  %s\n" "$(gzip -c "{}" | wc -c)" "{}"' \
+            | sort -rn
+
+  consumer-tarball:
+    name: Consumer / Tarball
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      - name: Install into a blank consumer
+        run: |
+          pnpm pack --pack-destination "$RUNNER_TEMP"
+          cp -R tests/consumer "$RUNNER_TEMP/consumer"
+          cd "$RUNNER_TEMP/consumer"
+          pnpm add "$(ls "$RUNNER_TEMP"/babywbx-liveflow-*.tgz)"
+          node verify.mjs
+
+  consumer-git:
+    name: Consumer / Git Install
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' }}
+    needs: [quality, build]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install this exact commit as a git dependency
+        run: |
+          cp -R tests/consumer "$RUNNER_TEMP/consumer"
+          cd "$RUNNER_TEMP/consumer"
+          pnpm add "git+https://github.com/babywbx/LiveFlow.git#${GITHUB_SHA}"
+          node verify.mjs

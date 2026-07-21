@@ -1,0 +1,14 @@
+packages:
+  - examples
+
+allowBuilds:
+  '@playwright/test': true
+  esbuild: true
+
+blockExoticSubdeps: true
+dangerouslyAllowAllBuilds: false
+enableGlobalVirtualStore: false
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
+strictDepBuilds: true
+verifyDepsBeforeRun: false

@@ -1,0 +1,57 @@
+name: Bug report
+description: 报告一个可复现的问题
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请勿在此报告安全问题，见 SECURITY.md。
+        请勿粘贴真实的签名 URL、Cookie、token 或真实用户数据。
+  - type: dropdown
+    id: entry
+    attributes:
+      label: 涉及入口
+      multiple: true
+      options:
+        - continuity
+        - danmaku
+        - danmaku/dom
+        - overlay
+        - native-video
+        - artplayer
+        - 其他 / 不确定
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: LiveFlow 版本或提交
+      placeholder: v0.1.0 或 commit SHA
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: 浏览器与版本
+      placeholder: Chrome 131 / macOS 15
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 请尽量给出最小复现，使用合成数据
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为与实际行为
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 诊断输出
+      description: 如果注册了 onDiagnostic，请附上相关事件；请先脱敏
+      render: text

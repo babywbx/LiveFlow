@@ -1,0 +1,19 @@
+node_modules/
+.DS_Store
+*.log
+
+# Build info and coverage. `dist/` is intentionally tracked.
+*.tsbuildinfo
+coverage/
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# Soak and benchmark output
+tests/soak/output/
+
+# Local research, drafts and scratch scripts
+local/

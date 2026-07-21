@@ -1,0 +1,9 @@
+{
+  "name": "liveflow-examples",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "echo \"examples land in phase 6\" && exit 1"
+  }
+}

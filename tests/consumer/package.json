@@ -1,0 +1,7 @@
+{
+  "name": "liveflow-consumer-check",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Blank consumer used by CI to verify install paths and subpath exports.",
+  "type": "module"
+}

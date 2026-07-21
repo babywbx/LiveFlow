@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+*.ts diff
+*.js diff
+*.mjs diff
+*.json diff
+
+dist/** linguist-generated=true
+pnpm-lock.yaml linguist-generated=true
