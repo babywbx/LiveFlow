@@ -32,3 +32,67 @@ export class AssetResolutionError extends LiveFlowError {
     this.assetKey = assetKey
   }
 }
+
+export class InvalidContinuityPolicyError extends LiveFlowError {
+  readonly field: string
+
+  constructor(field: string) {
+    super('invalid-continuity-policy', `Continuity policy field ${field} is invalid.`)
+    this.name = 'InvalidContinuityPolicyError'
+    this.field = field
+  }
+}
+
+export class InvalidPlaybackMetricsError extends LiveFlowError {
+  readonly field: string
+
+  constructor(field: string) {
+    super('invalid-playback-metrics', `Playback metrics field ${field} is invalid.`)
+    this.name = 'InvalidPlaybackMetricsError'
+    this.field = field
+  }
+}
+
+export type SourceTransitionPhase = 'prepare' | 'commit' | 'discard' | 'play'
+
+export class SourceTransitionError extends LiveFlowError {
+  readonly phase: SourceTransitionPhase
+  readonly generation: number
+
+  constructor(phase: SourceTransitionPhase, generation: number) {
+    super(`source-${phase}-failed`, `Could not ${phase} media generation ${String(generation)}.`)
+    this.name = 'SourceTransitionError'
+    this.phase = phase
+    this.generation = generation
+  }
+}
+
+export class PreparedSourceGenerationMismatchError extends LiveFlowError {
+  readonly expected: number
+  readonly received: number
+
+  constructor(expected: number, received: number) {
+    super(
+      'prepared-source-generation-mismatch',
+      `Prepared source generation ${String(received)} does not match expected generation ${String(expected)}.`,
+    )
+    this.name = 'PreparedSourceGenerationMismatchError'
+    this.expected = expected
+    this.received = received
+  }
+}
+
+export class CapacityExceededError extends LiveFlowError {
+  readonly resource: string
+  readonly limit: number
+
+  constructor(resource: string, limit: number) {
+    super(
+      'capacity-exceeded',
+      `LiveFlow resource ${resource} reached its limit of ${String(limit)}.`,
+    )
+    this.name = 'CapacityExceededError'
+    this.resource = resource
+    this.limit = limit
+  }
+}

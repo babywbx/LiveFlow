@@ -10,3 +10,4 @@ export interface Clock {
 export interface RandomSource {
     next(): number;
 }
+export declare function createSystemClock(): Clock;
