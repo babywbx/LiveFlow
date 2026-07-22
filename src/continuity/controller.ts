@@ -32,6 +32,8 @@ import type {
   PreparedSource,
 } from './types.js'
 
+type PreparedCleanupTrigger = 'commit' | 'destroy' | 'play' | 'source-timeout' | 'superseded'
+
 export interface ContinuityControllerOptions extends EngineHooks {
   readonly adapter: LivePlayerAdapter
   readonly contractVersion: number
@@ -73,6 +75,7 @@ class DefaultContinuityController implements ContinuityController {
   private recoveryTimer: TimerHandle | null = null
   private sourceTimeoutTimer: TimerHandle | null = null
   private pendingRecoveryReason: ContinuityRecoveryReason | null = null
+  private warmingPrepared: PreparedSource | null = null
   private lastRecoveryAt: number | null = null
   private hardLatencySamples = 0
   private appliedPlaybackRate = 1
@@ -92,11 +95,19 @@ class DefaultContinuityController implements ContinuityController {
 
   async setSource(source: LiveSource): Promise<void> {
     this.ensureActive()
+    const supersededPrepared = this.takeWarmingPrepared()
+    if (supersededPrepared !== null) {
+      void this.discardAfterTransitionFailure(
+        supersededPrepared,
+        supersededPrepared.generation,
+        'superseded',
+      )
+    }
     this.cancelMonitoring()
     this.cancelRecovery()
     this.cancelSourceTimeout()
     this.hardLatencySamples = 0
-    this.applyPlaybackRate(1, true)
+    this.applyPlaybackRateForSourceChange()
     const generation = this.machine.generation + 1
     this.transition({ type: 'source-requested', generation })
     this.scheduleSourceTimeout(generation)
@@ -126,6 +137,7 @@ class DefaultContinuityController implements ContinuityController {
       return
     }
 
+    this.warmingPrepared = prepared
     this.transition({ type: 'source-prepared', generation })
 
     try {
@@ -135,11 +147,15 @@ class DefaultContinuityController implements ContinuityController {
         this.cancelSourceTimeout()
       }
       this.transition({ type: 'source-failed', generation })
+      const failedPrepared = this.takeWarmingPrepared(generation)
+      if (failedPrepared !== null) {
+        await this.discardAfterTransitionFailure(failedPrepared, generation, 'commit')
+      }
       throw new SourceTransitionError('commit', generation)
     }
 
     if (!this.isPreparedSourceUsable(generation)) {
-      await this.discardPrepared(prepared, generation)
+      await this.discardTrackedPrepared(prepared, generation)
       return
     }
     if (this.hasStartedPlayback(generation)) {
@@ -153,11 +169,15 @@ class DefaultContinuityController implements ContinuityController {
         this.cancelSourceTimeout()
       }
       this.transition({ type: 'source-failed', generation })
+      const failedPrepared = this.takeWarmingPrepared(generation)
+      if (failedPrepared !== null) {
+        await this.discardAfterTransitionFailure(failedPrepared, generation, 'play')
+      }
       throw new SourceTransitionError('play', generation)
     }
 
     if (!this.isPreparedSourceUsable(generation)) {
-      await this.discardPrepared(prepared, generation)
+      await this.discardTrackedPrepared(prepared, generation)
     }
   }
 
@@ -224,6 +244,15 @@ class DefaultContinuityController implements ContinuityController {
     })
     this.listeners.clear()
 
+    const warmingPrepared = this.takeWarmingPrepared()
+    if (warmingPrepared !== null) {
+      try {
+        await this.discardPrepared(warmingPrepared, warmingPrepared.generation)
+      } catch {
+        cleanupFailed = true
+      }
+    }
+
     try {
       await this.adapter.destroy()
     } catch {
@@ -257,6 +286,7 @@ class DefaultContinuityController implements ContinuityController {
       this.hardLatencySamples = 0
       this.transition({ type: 'first-frame', generation: event.generation })
       if (previousState !== this.machine.state && this.machine.state === 'playing') {
+        this.takeWarmingPrepared(event.generation)
         this.cancelSourceTimeout()
         this.scheduleMonitoring()
       }
@@ -264,8 +294,13 @@ class DefaultContinuityController implements ContinuityController {
     }
 
     if (event.type === 'waiting' || event.type === 'stalled') {
+      if (this.machine.state === 'resolving' || this.machine.state === 'warming') {
+        return
+      }
       this.hardLatencySamples = 0
-      this.applyPlaybackRate(1, true)
+      if (!this.applyPlaybackRateSafely(1, true)) {
+        return
+      }
       this.cancelMonitoring()
       this.transition({ type: 'playback-degraded', generation: event.generation })
       this.diagnostics.emit({
@@ -280,7 +315,9 @@ class DefaultContinuityController implements ContinuityController {
 
     if (event.type === 'error') {
       this.hardLatencySamples = 0
-      this.applyPlaybackRate(1, true)
+      if (!this.applyPlaybackRateSafely(1, true)) {
+        return
+      }
       this.cancelMonitoring()
       this.transition({ type: 'playback-degraded', generation: event.generation })
 
@@ -303,7 +340,9 @@ class DefaultContinuityController implements ContinuityController {
 
     if (event.type === 'ended') {
       this.hardLatencySamples = 0
-      this.applyPlaybackRate(1, true)
+      if (!this.applyPlaybackRateSafely(1, true)) {
+        return
+      }
       this.cancelMonitoring()
       this.transition({ type: 'playback-degraded', generation: event.generation })
       this.scheduleRecovery('playback-error', 0)
@@ -346,6 +385,48 @@ class DefaultContinuityController implements ContinuityController {
       level: 'debug',
       generation,
     })
+  }
+
+  private async discardTrackedPrepared(
+    prepared: PreparedSource,
+    generation: number,
+  ): Promise<void> {
+    if (this.warmingPrepared !== prepared) {
+      return
+    }
+
+    this.warmingPrepared = null
+    await this.discardPrepared(prepared, generation)
+  }
+
+  private async discardAfterTransitionFailure(
+    prepared: PreparedSource,
+    generation: number,
+    trigger: PreparedCleanupTrigger,
+  ): Promise<void> {
+    try {
+      await this.discardPrepared(prepared, generation)
+    } catch {
+      this.diagnostics.emit({
+        scope: 'continuity',
+        code: 'prepared-source-cleanup-failed',
+        level: 'warn',
+        generation,
+        detail: {
+          trigger,
+        },
+      })
+    }
+  }
+
+  private takeWarmingPrepared(generation?: number): PreparedSource | null {
+    const prepared = this.warmingPrepared
+    if (prepared === null || (generation !== undefined && prepared.generation !== generation)) {
+      return null
+    }
+
+    this.warmingPrepared = null
+    return prepared
   }
 
   private transition(event: ContinuityMachineEvent): void {
@@ -403,7 +484,9 @@ class DefaultContinuityController implements ContinuityController {
       metrics = this.adapter.getMetrics()
       validatePlaybackMetrics(metrics, this.clock.now())
     } catch (error) {
-      this.applyPlaybackRate(1, true)
+      if (!this.applyPlaybackRateSafely(1, true)) {
+        return
+      }
       this.transition({
         type: 'playback-degraded',
         generation: this.machine.generation,
@@ -428,7 +511,9 @@ class DefaultContinuityController implements ContinuityController {
       metrics.stalledSince !== null &&
       this.clock.now() - metrics.stalledSince >= DefaultContinuityController.STALL_DEBOUNCE_MS
     ) {
-      this.applyPlaybackRate(1, true)
+      if (!this.applyPlaybackRateSafely(1, true)) {
+        return
+      }
       this.transition({
         type: 'playback-degraded',
         generation: this.machine.generation,
@@ -453,15 +538,21 @@ class DefaultContinuityController implements ContinuityController {
         if (
           metrics.bufferedAheadSeconds >= DefaultContinuityController.MIN_CATCHUP_BUFFER_SECONDS
         ) {
-          this.applyPlaybackRate(this.policy.catchupRate, false)
+          if (!this.applyPlaybackRateSafely(this.policy.catchupRate, false)) {
+            return
+          }
         } else {
-          this.applyPlaybackRate(1, true)
+          if (!this.applyPlaybackRateSafely(1, true)) {
+            return
+          }
         }
         return
       }
 
       this.hardLatencySamples = 0
-      this.applyPlaybackRate(1, true)
+      if (!this.applyPlaybackRateSafely(1, true)) {
+        return
+      }
       this.transition({
         type: 'playback-degraded',
         generation: this.machine.generation,
@@ -472,7 +563,9 @@ class DefaultContinuityController implements ContinuityController {
 
     if (metrics.bufferedAheadSeconds < DefaultContinuityController.MIN_CATCHUP_BUFFER_SECONDS) {
       this.hardLatencySamples = 0
-      this.applyPlaybackRate(1, true)
+      if (!this.applyPlaybackRateSafely(1, true)) {
+        return
+      }
       return
     }
 
@@ -483,12 +576,55 @@ class DefaultContinuityController implements ContinuityController {
       metrics.liveEdgeDistanceSeconds < this.policy.hardResyncThresholdSeconds &&
       metrics.bufferedAheadSeconds > 0
     ) {
-      this.applyPlaybackRate(this.policy.catchupRate, false)
+      this.applyPlaybackRateSafely(this.policy.catchupRate, false)
       return
     }
 
     if (metrics.liveEdgeDistanceSeconds <= this.policy.targetLatencySeconds) {
-      this.applyPlaybackRate(1, false)
+      this.applyPlaybackRateSafely(1, false)
+    }
+  }
+
+  private applyPlaybackRateForSourceChange(): void {
+    try {
+      this.applyPlaybackRate(1, true)
+    } catch {
+      this.transition({
+        type: 'playback-degraded',
+        generation: this.machine.generation,
+      })
+      this.diagnostics.emit({
+        scope: 'continuity',
+        code: 'playback-rate-update-failed',
+        level: 'warn',
+        generation: this.machine.generation,
+      })
+      this.scheduleRecovery('playback-error', 0)
+      throw new LiveFlowError(
+        'playback-rate-update-failed',
+        'The player rejected a playback-rate update.',
+      )
+    }
+  }
+
+  private applyPlaybackRateSafely(rate: number, immediate: boolean): boolean {
+    try {
+      this.applyPlaybackRate(rate, immediate)
+      return true
+    } catch {
+      this.cancelMonitoring()
+      this.transition({
+        type: 'playback-degraded',
+        generation: this.machine.generation,
+      })
+      this.diagnostics.emit({
+        scope: 'continuity',
+        code: 'playback-rate-update-failed',
+        level: 'warn',
+        generation: this.machine.generation,
+      })
+      this.scheduleRecovery('playback-error', 0)
+      return false
     }
   }
 
@@ -647,6 +783,10 @@ class DefaultContinuityController implements ContinuityController {
         type: 'playback-degraded',
         generation,
       })
+      const timedOutPrepared = this.takeWarmingPrepared(generation)
+      if (timedOutPrepared !== null) {
+        void this.discardAfterTransitionFailure(timedOutPrepared, generation, 'source-timeout')
+      }
       this.requestRecovery('source-timeout')
     }, this.policy.sourceWarmupTimeoutMs)
   }
