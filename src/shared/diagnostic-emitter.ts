@@ -18,7 +18,15 @@ export function createDiagnosticEmitter(hooks: EngineHooks, clock: Clock): Diagn
       }
 
       const previousEmission = lastEmittedAt.get(event.code)
-      const now = clock.now()
+      let now: number
+      try {
+        now = clock.now()
+      } catch {
+        return
+      }
+      if (!Number.isFinite(now)) {
+        return
+      }
       if (previousEmission !== undefined && now - previousEmission < DIAGNOSTIC_COOLDOWN_MS) {
         return
       }
