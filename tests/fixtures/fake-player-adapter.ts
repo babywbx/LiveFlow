@@ -20,17 +20,21 @@ export class FakePlayerAdapter implements LivePlayerAdapter {
   private readonly listeners = new Set<PlaybackEventListener>()
   private readonly pendingPreparations = new Map<number, (prepared: PreparedSource) => void>()
   private readonly discarded = new Set<number>()
+  private readonly liveResources = new Set<number>()
   private metrics = DEFAULT_METRICS
   private destroyed = false
   private destroyCalls = 0
   private currentPlaybackRate = 1
   private prepareError: Error | null = null
+  private commitError: Error | null = null
   private playError: Error | null = null
   private metricsError: Error | null = null
   private playbackRateError: Error | null = null
   private deferPrepare = false
   private deferPlay = false
   private preparedGenerationOverride: number | null = null
+  private stagedSourceGeneration: number | null = null
+  private visibleSourceGeneration: number | null = null
   private pendingPlayResolve: (() => void) | null = null
   private playObservedResolve: (() => void) | null = null
 
@@ -48,15 +52,28 @@ export class FakePlayerAdapter implements LivePlayerAdapter {
     if (this.preparedGenerationOverride !== null) {
       const preparedGeneration = this.preparedGenerationOverride
       this.preparedGenerationOverride = null
+      this.liveResources.add(preparedGeneration)
       return { generation: preparedGeneration }
     }
+    this.liveResources.add(generation)
     return { generation }
   }
 
-  async commit(_prepared: PreparedSource, _generation: number): Promise<void> {}
+  async commit(_prepared: PreparedSource, generation: number): Promise<void> {
+    if (this.commitError !== null) {
+      const error = this.commitError
+      this.commitError = null
+      throw error
+    }
+    this.stagedSourceGeneration = generation
+  }
 
   async discard(prepared: PreparedSource): Promise<void> {
     this.discarded.add(prepared.generation)
+    this.liveResources.delete(prepared.generation)
+    if (this.stagedSourceGeneration === prepared.generation) {
+      this.stagedSourceGeneration = null
+    }
   }
 
   async play(): Promise<void> {
@@ -114,9 +131,24 @@ export class FakePlayerAdapter implements LivePlayerAdapter {
     this.destroyCalls += 1
     this.destroyed = true
     this.listeners.clear()
+    this.liveResources.clear()
+    this.stagedSourceGeneration = null
+    this.visibleSourceGeneration = null
   }
 
   emit(event: PlaybackEvent): void {
+    if (event.type === 'first-frame' && this.stagedSourceGeneration === event.generation) {
+      const previousVisibleGeneration = this.visibleSourceGeneration
+      this.visibleSourceGeneration = event.generation
+      this.stagedSourceGeneration = null
+      if (
+        previousVisibleGeneration !== null &&
+        previousVisibleGeneration !== this.visibleSourceGeneration
+      ) {
+        this.liveResources.delete(previousVisibleGeneration)
+      }
+    }
+
     for (const listener of this.listeners) {
       listener(event)
     }
@@ -144,6 +176,10 @@ export class FakePlayerAdapter implements LivePlayerAdapter {
 
   failNextPlay(error: Error): void {
     this.playError = error
+  }
+
+  failNextCommit(error: Error): void {
+    this.commitError = error
   }
 
   overrideNextPreparedGeneration(generation: number): void {
@@ -186,10 +222,23 @@ export class FakePlayerAdapter implements LivePlayerAdapter {
     }
 
     this.pendingPreparations.delete(generation)
+    this.liveResources.add(generation)
     resolve({ generation })
   }
 
   wasDiscarded(generation: number): boolean {
     return this.discarded.has(generation)
+  }
+
+  stagedGeneration(): number | null {
+    return this.stagedSourceGeneration
+  }
+
+  visibleGeneration(): number | null {
+    return this.visibleSourceGeneration
+  }
+
+  hasLiveResource(generation: number): boolean {
+    return this.liveResources.has(generation)
   }
 }

@@ -40,6 +40,40 @@ describe('continuity controller', () => {
     await controller.destroy()
   })
 
+  it('does not treat pre-roll waiting events as a playback stall', async () => {
+    const adapter = new FakePlayerAdapter()
+    const clock = new FakeClock()
+    const reasons: string[] = []
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      onRecoveryRequest: (request) => {
+        reasons.push(request.reason)
+      },
+    })
+
+    await controller.setSource({
+      url: 'https://media.example/live.flv',
+      kind: 'flv',
+    })
+    adapter.emit({ type: 'waiting', generation: 1 })
+    adapter.emit({ type: 'stalled', generation: 1 })
+    clock.advanceBy(400)
+
+    expect(controller.getSnapshot().state).toBe('warming')
+    expect(reasons).toEqual([])
+
+    adapter.emit({ type: 'first-frame', generation: 1 })
+    adapter.emit({ type: 'waiting', generation: 1 })
+    expect(controller.getSnapshot().state).toBe('degraded')
+
+    clock.advanceBy(400)
+    expect(reasons).toEqual(['stall'])
+
+    await controller.destroy()
+  })
+
   it('uses a gentle playback rate only while the live edge is too far away', async () => {
     const adapter = new FakePlayerAdapter()
     const clock = new FakeClock()
@@ -364,9 +398,11 @@ describe('continuity controller', () => {
     expect(controller.getSnapshot().state).toBe('warming')
 
     clock.advanceBy(1)
+    await Promise.resolve()
 
     expect(reasons).toEqual(['source-timeout'])
     expect(controller.getSnapshot().state).toBe('recovering')
+    expect(adapter.hasLiveResource(1)).toBe(false)
 
     await controller.destroy()
     expect(clock.pendingTaskCount()).toBe(0)
@@ -403,7 +439,7 @@ describe('continuity controller', () => {
     await controller.destroy()
   })
 
-  it('distinguishes playback startup failure from source commit failure', async () => {
+  it('reports a playback startup failure with its source transition phase', async () => {
     const adapter = new FakePlayerAdapter()
     const controller = createContinuityController({
       adapter,
@@ -421,6 +457,104 @@ describe('continuity controller', () => {
       code: 'source-play-failed',
       phase: 'play',
       generation: 1,
+    })
+
+    await controller.destroy()
+  })
+
+  it('keeps the visible source when a replacement cannot be committed', async () => {
+    const adapter = new FakePlayerAdapter()
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock: new FakeClock(),
+    })
+
+    await controller.setSource({
+      url: 'https://media.example/original.flv',
+      kind: 'flv',
+    })
+    adapter.emit({ type: 'first-frame', generation: 1 })
+    adapter.failNextCommit(new Error('replacement commit failed'))
+
+    await expect(
+      controller.setSource({
+        url: 'https://media.example/replacement.flv',
+        kind: 'flv',
+      }),
+    ).rejects.toMatchObject({
+      code: 'source-commit-failed',
+      phase: 'commit',
+      generation: 2,
+    })
+
+    expect(adapter.visibleGeneration()).toBe(1)
+    expect(adapter.hasLiveResource(2)).toBe(false)
+
+    await controller.destroy()
+  })
+
+  it('keeps the visible source when a replacement cannot start playback', async () => {
+    const adapter = new FakePlayerAdapter()
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock: new FakeClock(),
+    })
+
+    await controller.setSource({
+      url: 'https://media.example/original.flv',
+      kind: 'flv',
+    })
+    adapter.emit({ type: 'first-frame', generation: 1 })
+    adapter.failNextPlay(new Error('signed replacement rejected'))
+
+    await expect(
+      controller.setSource({
+        url: 'https://media.example/replacement.flv?token=secret',
+        kind: 'flv',
+      }),
+    ).rejects.toMatchObject({
+      code: 'source-play-failed',
+      phase: 'play',
+      generation: 2,
+    })
+
+    expect(adapter.visibleGeneration()).toBe(1)
+    expect(adapter.hasLiveResource(2)).toBe(false)
+
+    await controller.destroy()
+  })
+
+  it('keeps the previous picture until the replacement first frame is visible', async () => {
+    const adapter = new FakePlayerAdapter()
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock: new FakeClock(),
+    })
+
+    await controller.setSource({
+      url: 'https://media.example/original.flv',
+      kind: 'flv',
+    })
+    adapter.emit({ type: 'first-frame', generation: 1 })
+
+    await controller.setSource({
+      url: 'https://media.example/replacement.flv',
+      kind: 'flv',
+    })
+
+    expect(adapter.visibleGeneration()).toBe(1)
+    expect(adapter.stagedGeneration()).toBe(2)
+
+    adapter.emit({ type: 'first-frame', generation: 2 })
+
+    expect(adapter.visibleGeneration()).toBe(2)
+    expect(adapter.hasLiveResource(1)).toBe(false)
+    expect(controller.getSnapshot()).toMatchObject({
+      state: 'playing',
+      generation: 2,
     })
 
     await controller.destroy()
@@ -594,6 +728,101 @@ describe('continuity controller', () => {
     expect(reasons).toEqual(['playback-error'])
     expect(diagnostics).toContain('metrics-sample-failed')
     expect(controller.getSnapshot().state).toBe('recovering')
+
+    await controller.destroy()
+  })
+
+  it('turns a playback-rate control failure into an explicit recovery', async () => {
+    const adapter = new FakePlayerAdapter()
+    const clock = new FakeClock()
+    const reasons: string[] = []
+    const diagnostics: string[] = []
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      onRecoveryRequest: (request) => {
+        reasons.push(request.reason)
+      },
+      onDiagnostic: (event) => {
+        diagnostics.push(event.code)
+      },
+    })
+
+    await controller.setSource({
+      url: 'https://media.example/live.flv',
+      kind: 'flv',
+    })
+    adapter.emit({ type: 'first-frame', generation: 1 })
+    adapter.setMetrics({
+      currentTimeSeconds: 5,
+      bufferedAheadSeconds: 2,
+      liveEdgeDistanceSeconds: 3,
+      playbackRate: 1,
+      stalledSince: null,
+      droppedFrames: null,
+    })
+    adapter.failNextPlaybackRate(new Error('rate control unavailable'))
+
+    expect(() => {
+      clock.advanceBy(500)
+    }).not.toThrow()
+    expect(reasons).toEqual(['playback-error'])
+    expect(diagnostics).toContain('playback-rate-update-failed')
+    expect(controller.getSnapshot().state).toBe('recovering')
+
+    await controller.destroy()
+  })
+
+  it('rejects a source change cleanly when normal playback speed cannot be restored', async () => {
+    const adapter = new FakePlayerAdapter()
+    const clock = new FakeClock()
+    const reasons: string[] = []
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      onRecoveryRequest: (request) => {
+        reasons.push(request.reason)
+      },
+    })
+
+    await controller.setSource({
+      url: 'https://media.example/original.flv',
+      kind: 'flv',
+    })
+    adapter.emit({ type: 'first-frame', generation: 1 })
+    adapter.setMetrics({
+      currentTimeSeconds: 5,
+      bufferedAheadSeconds: 3,
+      liveEdgeDistanceSeconds: 3,
+      playbackRate: 1,
+      stalledSince: null,
+      droppedFrames: null,
+    })
+    clock.advanceBy(500)
+    expect(adapter.playbackRate()).toBe(1.04)
+
+    adapter.failNextPlaybackRate(new Error('rate control unavailable'))
+    const sourceChange = controller.setSource({
+      url: 'https://media.example/replacement.flv?token=secret',
+      kind: 'flv',
+    })
+
+    await expect(sourceChange).rejects.toMatchObject({
+      code: 'playback-rate-update-failed',
+    })
+    await expect(sourceChange).rejects.not.toHaveProperty(
+      'message',
+      expect.stringContaining('secret'),
+    )
+    clock.advanceBy(0)
+    expect(reasons).toEqual(['playback-error'])
+    expect(controller.getSnapshot()).toMatchObject({
+      state: 'recovering',
+      generation: 1,
+    })
+    expect(adapter.visibleGeneration()).toBe(1)
 
     await controller.destroy()
   })
@@ -984,6 +1213,72 @@ describe('continuity controller', () => {
     await controller.destroy()
   })
 
+  it('commits only the newest of three concurrent source changes', async () => {
+    const adapter = new FakePlayerAdapter()
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock: new FakeClock(),
+    })
+    adapter.deferPreparations()
+
+    const firstChange = controller.setSource({
+      url: 'https://media.example/first.flv',
+      kind: 'flv',
+    })
+    const secondChange = controller.setSource({
+      url: 'https://media.example/second.flv',
+      kind: 'flv',
+    })
+    const thirdChange = controller.setSource({
+      url: 'https://media.example/third.flv',
+      kind: 'flv',
+    })
+
+    adapter.resolvePreparation(3)
+    await thirdChange
+    adapter.resolvePreparation(1)
+    adapter.resolvePreparation(2)
+    await Promise.all([firstChange, secondChange])
+
+    expect(adapter.stagedGeneration()).toBe(3)
+    expect(adapter.wasDiscarded(1)).toBe(true)
+    expect(adapter.wasDiscarded(2)).toBe(true)
+    expect(controller.getSnapshot()).toMatchObject({
+      state: 'warming',
+      generation: 3,
+    })
+
+    await controller.destroy()
+  })
+
+  it('discards a staged candidate when another source supersedes it', async () => {
+    const adapter = new FakePlayerAdapter()
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock: new FakeClock(),
+    })
+
+    await controller.setSource({
+      url: 'https://media.example/first.flv',
+      kind: 'flv',
+    })
+    expect(adapter.stagedGeneration()).toBe(1)
+
+    await controller.setSource({
+      url: 'https://media.example/second.flv',
+      kind: 'flv',
+    })
+    await Promise.resolve()
+
+    expect(adapter.wasDiscarded(1)).toBe(true)
+    expect(adapter.hasLiveResource(1)).toBe(false)
+    expect(adapter.stagedGeneration()).toBe(2)
+
+    await controller.destroy()
+  })
+
   it('destroys the adapter exactly once across repeated calls', async () => {
     const adapter = new FakePlayerAdapter()
     const controller = createContinuityController({
@@ -998,6 +1293,29 @@ describe('continuity controller', () => {
     expect(secondDestroy).toBe(firstDestroy)
     await firstDestroy
     expect(adapter.destroyCallCount()).toBe(1)
+    expect(controller.getSnapshot().state).toBe('stopped')
+  })
+
+  it('discards a prepared resource that resolves after the controller is destroyed', async () => {
+    const adapter = new FakePlayerAdapter()
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock: new FakeClock(),
+    })
+    adapter.deferPreparations()
+
+    const sourceChange = controller.setSource({
+      url: 'https://media.example/live.flv',
+      kind: 'flv',
+    })
+    await controller.destroy()
+
+    adapter.resolvePreparation(1)
+    await sourceChange
+
+    expect(adapter.wasDiscarded(1)).toBe(true)
+    expect(adapter.hasLiveResource(1)).toBe(false)
     expect(controller.getSnapshot().state).toBe('stopped')
   })
 
