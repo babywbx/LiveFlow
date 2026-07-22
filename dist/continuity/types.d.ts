@@ -17,18 +17,25 @@ export interface PlaybackMetrics {
 }
 export type PlaybackEvent = {
     type: 'ready';
+    generation: number;
 } | {
     type: 'playing';
+    generation: number;
 } | {
     type: 'waiting';
+    generation: number;
 } | {
     type: 'stalled';
+    generation: number;
 } | {
     type: 'first-frame';
+    generation: number;
 } | {
     type: 'ended';
+    generation: number;
 } | {
     type: 'error';
+    generation: number;
     code: string;
     recoverable: boolean;
 };
@@ -55,4 +62,23 @@ export interface ContinuityPolicy {
     sourceWarmupTimeoutMs: number;
     reopenGraceMs: number;
     maxAutomaticRecoveries: number;
+}
+export interface ContinuitySnapshot {
+    readonly state: ContinuityState;
+    readonly generation: number;
+    readonly automaticRecoveryCount: number;
+}
+export type ContinuitySnapshotListener = (snapshot: ContinuitySnapshot) => void;
+export type ContinuityRecoveryReason = 'stall' | 'latency' | 'playback-error' | 'source-timeout';
+export interface ContinuityRecoveryRequest {
+    readonly reason: ContinuityRecoveryReason;
+    readonly generation: number;
+    readonly attempt: number;
+}
+export type ContinuityRecoveryRequestListener = (request: ContinuityRecoveryRequest) => void;
+export interface ContinuityController {
+    setSource(source: LiveSource): Promise<void>;
+    getSnapshot(): ContinuitySnapshot;
+    subscribe(listener: ContinuitySnapshotListener): () => void;
+    destroy(): Promise<void>;
 }
