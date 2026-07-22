@@ -134,8 +134,22 @@ jobs:
       - name: Dist Committed
         run: |
           if [ -n "$(git status --porcelain -- dist)" ]; then
-            echo "dist/ is out of date. Run 'pnpm build' and commit the result."
+            echo "dist/ does not match src/. Run 'pnpm build' and commit the result."
+            echo "A deleted file here means dist/ still carried an orphaned artifact."
             git status --porcelain -- dist
+            exit 1
+          fi
+
+      - name: Dist Integrity
+        run: |
+          orphans=$(find dist -name '*.js' | while IFS= read -r artifact; do
+            source_file="src/${artifact#dist/}"
+            source_file="${source_file%.js}.ts"
+            [ -f "$source_file" ] || echo "$artifact"
+          done)
+          if [ -n "$orphans" ]; then
+            echo "Artifacts with no corresponding source file:"
+            echo "$orphans"
             exit 1
           fi
 
