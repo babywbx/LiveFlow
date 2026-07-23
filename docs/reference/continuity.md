@@ -60,6 +60,7 @@ const controller = createContinuityController({
 
 返回的 Promise 在 `play()` 完成后结束，不等待 `first-frame`。从开始 prepare 到首帧
 共享 `sourceWarmupTimeoutMs` 超时。超时后迟到的 prepared source 会被 discard，不能提交。
+已经 commit 但尚未产生首帧的候选源也会在超时、下一次换源或销毁时释放。
 
 调用方切换画质、CDN、签名 URL 或媒体代际时都调用 `setSource()`。连续性接口没有
 `setQuality()` 或 `setCdn()`；线路和画质解析权始终属于调用方。
@@ -126,8 +127,12 @@ Adapter 必须遵守以下顺序与所有权规则：
 
 - `prepare()` 不应提前替换调用方当前可见的媒体；
 - `PreparedSource` 的内部资源由 adapter 拥有；
-- `commit()` 必须使用传入 generation 拒绝过期提交；
-- `discard()` 必须可安全释放未提交或已过期的 prepared source；
+- `commit()` 只把 prepared source 设为隐藏候选，必须使用传入 generation 拒绝过期提交；
+- 候选源产生首帧后，adapter 先原子替换可见媒体，再发出该 generation 的
+  `first-frame`；
+- `discard()` 必须幂等释放未提交、已过期或尚未出首帧的候选源；
+- `destroy()` 释放当前可见媒体与所有内部候选，但 `discard()` 仍须能处理销毁后才返回的
+  迟到 `PreparedSource`；
 - 每个 `PlaybackEvent` 必须带产生它的 generation；
 - `destroy()` 与退订函数必须可重复、安全调用；
 - 错误不得包含完整签名 URL、Cookie 或 token。
@@ -194,15 +199,16 @@ interface ContinuityRecoveryRequest {
 
 ## 错误
 
-| 错误                                          | 条件                                          |
-| --------------------------------------------- | --------------------------------------------- |
-| `ContractVersionMismatchError`                | 调用方契约版本不匹配                          |
-| `InvalidContinuityPolicyError`                | 策略字段非法                                  |
-| `SourceTransitionError`                       | `prepare`、`commit`、`discard` 或 `play` 失败 |
-| `PreparedSourceGenerationMismatchError`       | adapter 返回了错误 generation                 |
-| `InvalidPlaybackMetricsError`                 | adapter 返回了非法播放指标                    |
-| `CapacityExceededError`                       | listener 或内部时钟句柄达到固定上限           |
-| `LiveFlowError` / `controller-cleanup-failed` | 销毁期间有 adapter 清理失败                   |
+| 错误                                            | 条件                                          |
+| ----------------------------------------------- | --------------------------------------------- |
+| `ContractVersionMismatchError`                  | 调用方契约版本不匹配                          |
+| `InvalidContinuityPolicyError`                  | 策略字段非法                                  |
+| `SourceTransitionError`                         | `prepare`、`commit`、`discard` 或 `play` 失败 |
+| `PreparedSourceGenerationMismatchError`         | adapter 返回了错误 generation                 |
+| `InvalidPlaybackMetricsError`                   | adapter 返回了非法播放指标                    |
+| `CapacityExceededError`                         | listener 或内部时钟句柄达到固定上限           |
+| `LiveFlowError` / `playback-rate-update-failed` | adapter 拒绝播放速度更新                      |
+| `LiveFlowError` / `controller-cleanup-failed`   | 销毁期间有 adapter 清理失败                   |
 
 `SourceTransitionError` 只暴露 phase 和 generation，不保留上游 `cause`，也不包含
 `LiveSource.url`。
@@ -213,11 +219,13 @@ interface ContinuityRecoveryRequest {
 
 - `stale-playback-event`
 - `prepared-source-discarded`
+- `prepared-source-cleanup-failed`
 - `stall-detected`
 - `catchup-started`
 - `catchup-stopped`
 - `metrics-sample-failed`
 - `invalid-playback-metrics`
+- `playback-rate-update-failed`
 - `nonrecoverable-playback-error`
 - `recovery-requested`
 - `recovery-exhausted`
