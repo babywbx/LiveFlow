@@ -1,5 +1,10 @@
 import { CONTRACT_VERSION, ContractVersionMismatchError, LiveFlowError } from '@babywbx/liveflow'
 import { createContinuityController, DEFAULT_CONTINUITY_POLICY } from '@babywbx/liveflow/continuity'
+import { createDanmakuEngine } from '@babywbx/liveflow/danmaku'
+import { createDomDanmakuRenderer } from '@babywbx/liveflow/danmaku/dom'
+import { createOverlayBudgetCoordinator, createOverlayEngine } from '@babywbx/liveflow/overlay'
+import { createNativeVideoAdapter } from '@babywbx/liveflow/native-video'
+import { createArtPlayerAdapter } from '@babywbx/liveflow/artplayer'
 
 const subpaths = [
   '@babywbx/liveflow/continuity',
@@ -29,6 +34,19 @@ if (!(new ContractVersionMismatchError(1, 2) instanceof LiveFlowError)) {
 
 if (typeof createContinuityController !== 'function') {
   fail('createContinuityController is not callable from the built package.')
+}
+
+for (const [name, factory] of [
+  ['createDanmakuEngine', createDanmakuEngine],
+  ['createDomDanmakuRenderer', createDomDanmakuRenderer],
+  ['createOverlayEngine', createOverlayEngine],
+  ['createOverlayBudgetCoordinator', createOverlayBudgetCoordinator],
+  ['createNativeVideoAdapter', createNativeVideoAdapter],
+  ['createArtPlayerAdapter', createArtPlayerAdapter],
+]) {
+  if (typeof factory !== 'function') {
+    fail(`${name} is not callable from the built package.`)
+  }
 }
 
 if (typeof DEFAULT_CONTINUITY_POLICY?.targetLatencySeconds !== 'number') {
