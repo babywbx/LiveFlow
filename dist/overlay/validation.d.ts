@@ -1,0 +1,10 @@
+import type { OverlayBudgetLimits, OverlayInstanceState, OverlayInstanceStateUpdate, OverlayLimits, RealtimeOverlayEvent } from './types.js';
+export declare const DEFAULT_OVERLAY_LIMITS: Readonly<OverlayLimits>;
+export declare const DEFAULT_OVERLAY_INSTANCE_STATE: Readonly<OverlayInstanceState>;
+export declare function resolveOverlayLimits(overrides?: Partial<OverlayLimits>): OverlayLimits;
+export declare function validateBudgetLimits(limits: OverlayBudgetLimits): void;
+export declare function validateInstanceId(instanceId: string, maxLength?: number): void;
+export declare function validateInstanceState(state: OverlayInstanceState): void;
+export declare function mergeInstanceState(state: OverlayInstanceState, update: OverlayInstanceStateUpdate): OverlayInstanceState;
+export declare function validateRendererKind(kind: string, maxLength: number): void;
+export declare function parseOverlayEvent(candidate: unknown, limits: OverlayLimits, now: number): RealtimeOverlayEvent;

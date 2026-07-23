@@ -8,7 +8,16 @@ export function createDiagnosticEmitter(hooks, clock) {
                 return;
             }
             const previousEmission = lastEmittedAt.get(event.code);
-            const now = clock.now();
+            let now;
+            try {
+                now = clock.now();
+            }
+            catch {
+                return;
+            }
+            if (!Number.isFinite(now)) {
+                return;
+            }
             if (previousEmission !== undefined && now - previousEmission < DIAGNOSTIC_COOLDOWN_MS) {
                 return;
             }
