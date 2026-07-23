@@ -1,6 +1,6 @@
 {
   "name": "@babywbx/liveflow",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "private": true,
   "description": "A browser-side live playback and realtime overlay stack.",
   "license": "MIT",
@@ -11,6 +11,10 @@
   },
   "files": [
     "dist",
+    "docs",
+    "README.md",
+    "README.en.md",
+    "THIRD_PARTY_NOTICES.md",
     "LICENSE"
   ],
   "type": "module",
@@ -57,12 +61,17 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:browser": "playwright test",
-    "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm test && pnpm build",
-    "prepare": "pnpm build"
+    "test:soak": "vitest run --config vitest.soak.config.ts",
+    "test:soak:browser": "BROWSER_SOAK_DURATION_MS=21600000 playwright test tests/browser/runtime-soak.spec.ts --project=chromium --workers=1",
+    "examples:check": "pnpm --filter liveflow-examples build",
+    "docs:check": "node scripts/check-doc-links.mjs",
+    "size:check": "node scripts/check-bundle-size.mjs",
+    "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm docs:check && pnpm test && pnpm build && pnpm size:check && pnpm examples:check"
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
     "@types/node": "^26.1.1",
+    "esbuild": "^0.28.1",
     "oxfmt": "^0.60.0",
     "oxlint": "^1.75.0",
     "oxlint-tsgolint": "^7.0.2001",

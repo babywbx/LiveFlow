@@ -7,3 +7,6 @@
 
 dist/** linguist-generated=true
 pnpm-lock.yaml linguist-generated=true
+
+scripts/*.mjs linguist-detectable=false
+tests/consumer/verify.mjs linguist-detectable=false

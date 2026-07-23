@@ -248,6 +248,16 @@
       }
     },
     {
+      "files": ["scripts/**/*.mjs"],
+      "rules": {
+        "typescript/no-unsafe-argument": "off",
+        "typescript/no-unsafe-assignment": "off",
+        "typescript/no-unsafe-call": "off",
+        "typescript/no-unsafe-member-access": "off",
+        "typescript/no-unsafe-return": "off"
+      }
+    },
+    {
       "files": ["tests/**/*.ts"],
       "env": {
         "browser": true,
@@ -262,6 +272,14 @@
         "typescript/no-unsafe-assignment": "off",
         "typescript/require-await": "off",
         "typescript/unbound-method": "off"
+      }
+    },
+    {
+      "files": ["tests/browser/**/*.ts", "tests/soak/**/*.ts"],
+      "rules": {
+        "typescript/no-unsafe-call": "off",
+        "typescript/no-unsafe-member-access": "off",
+        "typescript/prefer-promise-reject-errors": "off"
       }
     }
   ]

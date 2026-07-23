@@ -5,6 +5,7 @@ node_modules/
 # Build info and coverage. `dist/` is intentionally tracked.
 *.tsbuildinfo
 coverage/
+examples/dist/
 
 # Playwright
 test-results/

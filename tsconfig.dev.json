@@ -1,9 +1,18 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
     "types": ["node"],
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts", "playwright.config.ts"],
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "scripts/**/*.mjs",
+    "vitest.config.ts",
+    "vitest.soak.config.ts",
+    "playwright.config.ts"
+  ],
   "exclude": ["dist", "node_modules", "examples", "local", "tests/consumer/**"]
 }
