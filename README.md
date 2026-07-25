@@ -56,7 +56,7 @@
   `innerHTML` 的安全 DOM renderer。
 - **跨实例预算。** 四路或九路播放网格通过页面显式创建的协调器，共享完整卡片与高成本动画的
   全局上限。
-- **天然延迟加载。** 根入口、三个引擎和两个播放器 adapter 都是独立 ESM 子路径，用户不开始
+- **天然延迟加载。** 根入口、三个引擎和五个播放器 adapter 都是独立 ESM 子路径，用户不开始
   播放就不下载任何一个。
 - **零运行时依赖。** 模块求值不触碰 DOM、计时器和全局对象，因此在服务端渲染环境导入核心入口
   是安全的。
@@ -72,8 +72,8 @@
 LiveFlow 解决两类问题：在弱网、短断流、换线路、换画质和媒体代际变化时让直播播放尽量连续；
 以及在直播画面上以有界、可扩展的方式展示实时弹幕和结构化事件卡。
 
-它不绑定任何播放器。原生 `<video>` 与 ArtPlayer-like seam 只是两个可选 adapter，位于同一个
-`LivePlayerAdapter` 接口之后。
+它不绑定任何播放器。原生 `<video>`、ArtPlayer-like、DPlayer-like、Video.js-like 与
+XGPlayer-like 只是五个可选 adapter，位于同一个 `LivePlayerAdapter` 接口之后。
 
 **非目标。** LiveFlow 不实现推流、转码、录制、媒体分发、取流地址解析、平台签名、平台弹幕
 协议、后端代理、消息持久化、HLS / FLV / DASH 解码、完整播放器 UI、礼物素材，也不承担框架层的
@@ -223,16 +223,19 @@ overlay.submit({
 | 子路径                             | 内容                                     |   gzip | 预算 |
 | ---------------------------------- | ---------------------------------------- | -----: | ---: |
 | `@babywbx/liveflow`                | `CONTRACT_VERSION`、共享类型与类型化错误 |      — |    — |
-| `@babywbx/liveflow/continuity`     | 连续性控制器与播放器 adapter 契约        | 4.1 KB | 6 KB |
+| `@babywbx/liveflow/continuity`     | 连续性控制器与播放器 adapter 契约        | 4.7 KB | 6 KB |
 | `@babywbx/liveflow/danmaku`        | 有界弹幕调度核心                         | 4.9 KB | 7 KB |
 | `@babywbx/liveflow/danmaku/dom`    | 安全结构化 DOM renderer 与颜色工具       | 2.8 KB | 4 KB |
 | `@babywbx/liveflow/overlay`        | 实时事件引擎与共享预算协调器             | 5.6 KB | 8 KB |
-| `@babywbx/liveflow/overlay/banner` | 事件横幅呈现器（可选，按需加载）         | 3.2 KB | 5 KB |
+| `@babywbx/liveflow/overlay/banner` | 事件横幅呈现器（可选，按需加载）         | 4.0 KB | 5 KB |
 | `@babywbx/liveflow/chrome`         | 播放器控件显隐控制器（空闲隐藏与常驻）   | 1.4 KB | 2 KB |
 | `@babywbx/liveflow/multiview`      | 多路宫格布局数学与网格轨道声明           | 0.9 KB | 2 KB |
 | `@babywbx/liveflow/native-video`   | 原生 `<video>` adapter                   | 3.0 KB | 4 KB |
 | `@babywbx/liveflow/page-activity`  | 页面可见性来源（省电暂停续播）           | 0.5 KB | 2 KB |
 | `@babywbx/liveflow/artplayer`      | 零静态播放器依赖的 ArtPlayer-like seam   | 3.0 KB | 4 KB |
+| `@babywbx/liveflow/dplayer`        | 零静态播放器依赖的 DPlayer-like seam     | 3.0 KB | 4 KB |
+| `@babywbx/liveflow/videojs`        | 零静态播放器依赖的 Video.js-like seam    | 3.2 KB | 4 KB |
+| `@babywbx/liveflow/xgplayer`       | 零静态播放器依赖的 XGPlayer-like seam    | 3.0 KB | 4 KB |
 
 体积由 `pnpm size:check` 压缩后 gzip 实测，超过预算列即 CI 失败。四个核心子路径合并实测
 15.7 KB，冻结上限 20 KB。
@@ -348,11 +351,14 @@ interface LivePlayerAdapter {
 原子显示候选实例，**再**发出 `first-frame`；`discard()` 与 `destroy()` 幂等；每个 `PlaybackEvent`
 都带产生它的 generation；错误中不出现完整签名 URL、Cookie 或 token。
 
-库内提供两个实现：
+库内提供五个实现：
 
 ```ts
 import { createNativeVideoAdapter } from '@babywbx/liveflow/native-video'
 import { createArtPlayerAdapter } from '@babywbx/liveflow/artplayer'
+import { createDPlayerAdapter } from '@babywbx/liveflow/dplayer'
+import { createVideoJsAdapter } from '@babywbx/liveflow/videojs'
+import { createXgPlayerAdapter } from '@babywbx/liveflow/xgplayer'
 ```
 
 `createNativeVideoAdapter({ video })` 在同一父节点创建隐藏候选 video，复制 `controls`、
@@ -362,8 +368,15 @@ import { createArtPlayerAdapter } from '@babywbx/liveflow/artplayer'
 
 `createArtPlayerAdapter({ player, createPlayer })` 不静态导入任何播放器包。调用方提供一个很小的
 `ArtPlayerLike` 包装（底层 `video`、`on` / `off`、`setMutex(false)`、`destroy()`，以及可选的
-`container` 与 `overlayContainer`），外加一个每次返回独立实例的工厂。两个适配器都支持注入自定义
-surface，其 `reveal` 必须同步且原子。参考：[播放器适配器](./docs/reference/adapters.md)、
+`container` 与 `overlayContainer`），外加一个每次返回独立实例的工厂。
+
+`createDPlayerAdapter`、`createVideoJsAdapter` 与 `createXgPlayerAdapter` 采用同样的包装模式：
+只依赖结构化的 `*Like` 接口与候选实例工厂，不静态导入任何播放器包。DPlayer seam 兼容其没有
+`off` 的事件系统；Video.js seam 通过 `el()` 解析底层媒体元素并容忍 `dispose()` 自删 DOM；
+XGPlayer seam 按 `media`、`video` 顺序解析媒体元素并以 `root` 作为默认容器。
+
+全部适配器都支持注入自定义 surface，其 `reveal` 必须同步且原子。参考：
+[播放器适配器](./docs/reference/adapters.md)、
 [实现自定义播放器适配器](./docs/how-to/custom-player-adapter.md)。
 
 ### 弹幕 —— `@babywbx/liveflow/danmaku`

@@ -57,7 +57,7 @@ Three independent bounded engines: media continuity, structured danmaku, and rea
   single safe DOM renderer with no `innerHTML`.
 - **Cross-instance budget.** Four- or nine-player grids share explicit ceilings for full cards and
   high-cost animations through a coordinator the page creates and owns.
-- **Lazy by construction.** The root entry, three engines, and two player adapters are independent
+- **Lazy by construction.** The root entry, three engines, and five player adapters are independent
   ESM subpaths; nothing downloads until playback actually starts.
 - **Zero runtime dependencies.** Module evaluation touches no DOM, timers, or globals, so importing
   the core entry is safe during server-side rendering.
@@ -74,8 +74,8 @@ LiveFlow solves two problems: keeping live playback continuous across weak netwo
 outages, line switches, quality changes, and media generation changes; and presenting realtime
 danmaku and structured event cards over the video in a bounded, extensible way.
 
-It is not bound to any player. Native `<video>` and an ArtPlayer-like seam are optional adapters
-behind the same `LivePlayerAdapter` interface.
+It is not bound to any player. Native `<video>`, ArtPlayer-like, DPlayer-like, Video.js-like, and
+XGPlayer-like seams are optional adapters behind the same `LivePlayerAdapter` interface.
 
 **Non-goals.** LiveFlow does not implement ingest, transcoding, recording, media distribution,
 stream URL resolution, platform signatures, platform chat protocols, backend proxies, message
@@ -228,16 +228,19 @@ and never statically pulls in an engine or a player runtime.
 | Subpath                            | Provides                                             |   gzip | Budget |
 | ---------------------------------- | ---------------------------------------------------- | -----: | -----: |
 | `@babywbx/liveflow`                | `CONTRACT_VERSION`, shared types, typed errors       |      — |      — |
-| `@babywbx/liveflow/continuity`     | Continuity controller and player adapter contract    | 4.1 KB |   6 KB |
+| `@babywbx/liveflow/continuity`     | Continuity controller and player adapter contract    | 4.7 KB |   6 KB |
 | `@babywbx/liveflow/danmaku`        | Bounded danmaku scheduler                            | 4.9 KB |   7 KB |
 | `@babywbx/liveflow/danmaku/dom`    | Safe structured DOM renderer and color helpers       | 2.8 KB |   4 KB |
 | `@babywbx/liveflow/overlay`        | Realtime event engine and shared budget coordinator  | 5.6 KB |   8 KB |
-| `@babywbx/liveflow/overlay/banner` | Event banner presenter (optional)                    | 3.2 KB |   5 KB |
+| `@babywbx/liveflow/overlay/banner` | Event banner presenter (optional)                    | 4.0 KB |   5 KB |
 | `@babywbx/liveflow/chrome`         | Player chrome visibility controller                  | 1.4 KB |   2 KB |
 | `@babywbx/liveflow/multiview`      | Multiview grid layout math and grid track contract   | 0.9 KB |   2 KB |
 | `@babywbx/liveflow/native-video`   | Native `<video>` adapter                             | 3.0 KB |   4 KB |
 | `@babywbx/liveflow/page-activity`  | Page visibility source for suspended playback        | 0.5 KB |   2 KB |
 | `@babywbx/liveflow/artplayer`      | ArtPlayer-like seam with no static player dependency | 3.0 KB |   4 KB |
+| `@babywbx/liveflow/dplayer`        | DPlayer-like seam with no static player dependency   | 3.0 KB |   4 KB |
+| `@babywbx/liveflow/videojs`        | Video.js-like seam with no static player dependency  | 3.2 KB |   4 KB |
+| `@babywbx/liveflow/xgplayer`       | XGPlayer-like seam with no static player dependency  | 3.0 KB |   4 KB |
 
 Measured minified and gzipped by `pnpm size:check`, which fails CI on any regression past the
 budget column. The four core subpaths combined measure 15.1 KB against a 20 KB ceiling.
@@ -360,11 +363,14 @@ An adapter must not replace the visible media during `prepare()`, must reject st
 `discard()` and `destroy()` idempotent, must tag every `PlaybackEvent` with its generation, and must
 never put a signed URL, cookie, or token into an error.
 
-Two implementations ship with the library:
+Five implementations ship with the library:
 
 ```ts
 import { createNativeVideoAdapter } from '@babywbx/liveflow/native-video'
 import { createArtPlayerAdapter } from '@babywbx/liveflow/artplayer'
+import { createDPlayerAdapter } from '@babywbx/liveflow/dplayer'
+import { createVideoJsAdapter } from '@babywbx/liveflow/videojs'
+import { createXgPlayerAdapter } from '@babywbx/liveflow/xgplayer'
 ```
 
 `createNativeVideoAdapter({ video })` creates the hidden candidate in the same parent node, copies
@@ -376,8 +382,16 @@ element it passed in; every node the adapter created is removed by the adapter.
 `createArtPlayerAdapter({ player, createPlayer })` never statically imports a player package. The
 caller supplies a small `ArtPlayerLike` wrapper (underlying `video`, `on` / `off`, `setMutex(false)`,
 `destroy()`, optional `container` and `overlayContainer`) plus a factory that returns a fresh
-instance per call. Both adapters accept a custom surface whose `reveal` must be synchronous and
-atomic. Reference: [Adapters](./docs/reference/adapters.md),
+instance per call.
+
+`createDPlayerAdapter`, `createVideoJsAdapter`, and `createXgPlayerAdapter` follow the same wrapper
+pattern: structural `*Like` interfaces plus a candidate factory, with no static player imports. The
+DPlayer seam accommodates its event system that has no `off`; the Video.js seam resolves the media
+element through `el()` and tolerates `dispose()` detaching the host from the DOM; the XGPlayer seam
+resolves the media element from `media` then `video` and uses `root` as the default container.
+
+All adapters accept a custom surface whose `reveal` must be synchronous and atomic.
+Reference: [Adapters](./docs/reference/adapters.md),
 [Custom player adapter](./docs/how-to/custom-player-adapter.md).
 
 ### Danmaku — `@babywbx/liveflow/danmaku`

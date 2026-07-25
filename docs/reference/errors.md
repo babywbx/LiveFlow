@@ -69,6 +69,9 @@ listener 数量和 `pin` 深度达到上限时抛出共享的 `CapacityExceededE
 | 媒体控制         | `media-pause-failed`、`media-mute-failed`、`media-volume-failed`、`playback-rate-failed`、`invalid-media-volume`、`invalid-playback-rate`、`media-metrics-failed`                                                            |
 | 原生 video       | `native-video-surface-required`、`invalid-native-video`、`native-video-stage-failed`、`native-video-stage-cleanup-failed`、`native-video-subscribe-failed`、`native-video-unsubscribe-failed`、`native-video-cleanup-failed` |
 | ArtPlayer-like   | `artplayer-surface-required`、`artplayer-container-missing`、`artplayer-mutex-failed`、`artplayer-create-failed`、`artplayer-subscribe-failed`、`artplayer-unsubscribe-failed`、`artplayer-cleanup-failed`                   |
+| DPlayer-like     | `dplayer-surface-required`、`dplayer-container-missing`、`dplayer-create-failed`、`dplayer-subscribe-failed`、`dplayer-cleanup-failed`                                                                                       |
+| Video.js-like    | `videojs-surface-required`、`videojs-host-missing`、`videojs-video-missing`、`videojs-create-failed`、`videojs-subscribe-failed`、`videojs-unsubscribe-failed`、`videojs-cleanup-failed`                                     |
+| XGPlayer-like    | `xgplayer-surface-required`、`xgplayer-root-missing`、`xgplayer-media-missing`、`xgplayer-create-failed`、`xgplayer-subscribe-failed`、`xgplayer-unsubscribe-failed`、`xgplayer-cleanup-failed`                              |
 | 聚合清理         | `player-adapter-cleanup-failed`                                                                                                                                                                                              |
 
 它不保留播放器原始错误，也不包含 source URL。

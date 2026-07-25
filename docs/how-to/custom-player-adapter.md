@@ -3,6 +3,20 @@
 自定义播放器通过 `LivePlayerAdapter` seam 接入连续性引擎。adapter 负责媒体实例和 DOM，
 连续性控制器负责 generation、恢复和追帧决策。
 
+## 先确认是否需要自定义 adapter
+
+大多数播放器不需要从零实现 adapter，先按顺序检查两条现成路线：
+
+1. **播放器暴露底层 `<video>` 元素**：直接使用原生 video 适配器。播放引擎（如 HLS /
+   FLV 解码库）通过 `NativeVideoSourceBinding` 的 `attach` / `detach` 挂接到候选元素，
+   换源与首帧交接由适配器完成。
+2. **播放器是完整实例、需要整体重建换源**：使用现成的包装型适配器子路径——
+   `/artplayer`、`/dplayer`、`/videojs`、`/xgplayer`。它们都只依赖结构化的
+   `*Like` 接口，不静态导入播放器包；接口形状相近的播放器通常可以直接复用。
+
+两条路线都不适用（例如播放器不暴露媒体元素，或指标来自私有通道）时，才需要按下文实现
+完整的 `LivePlayerAdapter`。
+
 ## 实现 interface
 
 ```ts

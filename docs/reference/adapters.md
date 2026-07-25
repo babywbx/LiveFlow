@@ -1,7 +1,8 @@
 # 播放器适配器参考
 
-LiveFlow 提供原生 `<video>` 与 ArtPlayer-like 两个可选适配器。二者实现相同的
-`LivePlayerAdapter` 接口，连续性引擎不感知播放器类型。
+LiveFlow 提供五个可选适配器子路径：原生 `<video>`、ArtPlayer-like、DPlayer-like、
+Video.js-like 与 XGPlayer-like。它们实现相同的 `LivePlayerAdapter` 接口，连续性引擎
+不感知播放器类型。
 
 适配器模块只负责媒体实例生命周期和播放器事件转换。它们不获取媒体地址、不解析平台协议，
 也不创建解码器。
@@ -147,6 +148,118 @@ surface 负责隐藏、显示与删除。特殊网格或拖拽布局应注入 `A
 
 适配器自身销毁时会先解除监听器，因此不会把正常清理误报为播放器错误。
 
+## DPlayer-like
+
+DPlayer 子路径同样不静态导入播放器包，调用方提供 `DPlayerLike` 实例与候选工厂：
+
+```ts
+import { createDPlayerAdapter } from '@babywbx/liveflow/dplayer'
+
+const adapter = createDPlayerAdapter({
+  player: currentPlayer,
+  createPlayer: async (source, generation) => {
+    return createApplicationPlayer({ url: source.url, generation })
+  },
+})
+```
+
+`DPlayerLike` 需要提供：
+
+- 底层 `video`（原生媒体元素）；
+- `on` 事件订阅；
+- `destroy()`；
+- 可选 `container`。
+
+DPlayer 的事件系统没有 `off`。适配器通过内部失效标志停止转发已退订的事件，实例被
+`destroy()` 后监听器随实例一起回收，因此销毁后不会有事件继续影响适配器状态。
+
+### DPlayer-like 事件映射
+
+| 输入事件                | `PlaybackEvent`                             |
+| ----------------------- | ------------------------------------------- |
+| `loadeddata`、`canplay` | `ready`                                     |
+| `playing`               | `playing`，候选实例首帧后另发 `first-frame` |
+| `waiting`               | `waiting`                                   |
+| `stalled`               | `stalled`                                   |
+| `ended`                 | `ended`                                     |
+| `error`                 | 可恢复的 `error`                            |
+| `destroy`               | 不可恢复的 `error`                          |
+
+## Video.js-like
+
+Video.js 子路径通过 `el()` 返回的宿主元素查询底层 `<video>`。解析不到媒体元素时抛出
+带 `videojs-video-missing` 代码的类型化错误，不做静默降级：
+
+```ts
+import { createVideoJsAdapter } from '@babywbx/liveflow/videojs'
+
+const adapter = createVideoJsAdapter({
+  player: currentPlayer,
+  createPlayer: async (source, generation) => {
+    return createApplicationPlayer({ url: source.url, generation })
+  },
+})
+```
+
+`VideoJsPlayerLike` 需要提供：
+
+- `el()` 返回宿主元素（默认 surface 与媒体元素解析都基于它）；
+- `on` / `off` 事件订阅；
+- `dispose()`。
+
+`dispose()` 会自行把宿主元素从 DOM 移除，默认 surface 的删除步骤对此保持容忍，不会把
+已删除的宿主误报为错误。
+
+### Video.js-like 事件映射
+
+| 输入事件                | `PlaybackEvent`                             |
+| ----------------------- | ------------------------------------------- |
+| `loadeddata`、`canplay` | `ready`                                     |
+| `playing`               | `playing`，候选实例首帧后另发 `first-frame` |
+| `waiting`               | `waiting`                                   |
+| `stalled`               | `stalled`                                   |
+| `ended`                 | `ended`                                     |
+| `error`                 | 可恢复的 `error`                            |
+| `dispose`               | 不可恢复的 `error`                          |
+
+## XGPlayer-like
+
+XGPlayer 子路径按 `media`、`video` 的顺序解析底层媒体元素，两者都不存在时抛出带
+`xgplayer-media-missing` 代码的类型化错误：
+
+```ts
+import { createXgPlayerAdapter } from '@babywbx/liveflow/xgplayer'
+
+const adapter = createXgPlayerAdapter({
+  player: currentPlayer,
+  createPlayer: async (source, generation) => {
+    return createApplicationPlayer({ url: source.url, generation })
+  },
+})
+```
+
+`XgPlayerLike` 需要提供：
+
+- `media` 或 `video`（底层媒体元素，至少其一）；
+- `on` / `off` 事件订阅；
+- `destroy()`；
+- 可选 `root`（默认 surface 的容器）。
+
+### XGPlayer-like 事件映射
+
+| 输入事件                         | `PlaybackEvent`                             |
+| -------------------------------- | ------------------------------------------- |
+| `ready`、`loadeddata`、`canplay` | `ready`                                     |
+| `playing`                        | `playing`，候选实例首帧后另发 `first-frame` |
+| `waiting`                        | `waiting`                                   |
+| `stalled`                        | `stalled`                                   |
+| `ended`                          | `ended`                                     |
+| `error`                          | 可恢复的 `error`                            |
+| `destroy`                        | 不可恢复的 `error`                          |
+
+三个包装型适配器的候选工厂都必须为每次调用返回独立实例；`reveal` 语义、候选静音与首帧
+门控与 ArtPlayer-like 完全一致。
+
 ## 媒体指标
 
 `getMetrics()` 从当前可见实例的底层 video 读取：
@@ -161,5 +274,5 @@ surface 负责隐藏、显示与删除。特殊网格或拖拽布局应注入 `A
 ## 浏览器基线
 
 默认 DOM surface 的最低浏览器版本是 Chrome / Edge 111、Safari / iOS Safari 16.4 和
-Firefox 128。模块求值阶段不访问 DOM；服务端可以安全导入核心入口和两个适配器子路径，只有
+Firefox 128。模块求值阶段不访问 DOM；服务端可以安全导入核心入口和全部适配器子路径，只有
 创建默认 DOM surface 时才要求浏览器环境。
