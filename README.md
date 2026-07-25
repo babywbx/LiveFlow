@@ -220,18 +220,19 @@ overlay.submit({
 
 每个引擎和 adapter 都是独立 ESM 子路径。根入口只导出共享契约，绝不静态加载引擎或播放器运行时。
 
-| 子路径                            | 内容                                     |   gzip | 预算 |
-| --------------------------------- | ---------------------------------------- | -----: | ---: |
-| `@babywbx/liveflow`               | `CONTRACT_VERSION`、共享类型与类型化错误 |      — |    — |
-| `@babywbx/liveflow/continuity`    | 连续性控制器与播放器 adapter 契约        | 4.1 KB | 6 KB |
-| `@babywbx/liveflow/danmaku`       | 有界弹幕调度核心                         | 4.9 KB | 7 KB |
-| `@babywbx/liveflow/danmaku/dom`   | 安全结构化 DOM renderer 与颜色工具       | 2.8 KB | 4 KB |
-| `@babywbx/liveflow/overlay`       | 实时事件引擎与共享预算协调器             | 5.6 KB | 8 KB |
-| `@babywbx/liveflow/chrome`        | 播放器控件显隐控制器（空闲隐藏与常驻）   | 1.4 KB | 2 KB |
-| `@babywbx/liveflow/multiview`     | 多路宫格布局数学与网格轨道声明           | 0.9 KB | 2 KB |
-| `@babywbx/liveflow/native-video`  | 原生 `<video>` adapter                   | 3.0 KB | 4 KB |
-| `@babywbx/liveflow/page-activity` | 页面可见性来源（省电暂停续播）           | 0.5 KB | 2 KB |
-| `@babywbx/liveflow/artplayer`     | 零静态播放器依赖的 ArtPlayer-like seam   | 3.0 KB | 4 KB |
+| 子路径                             | 内容                                     |   gzip | 预算 |
+| ---------------------------------- | ---------------------------------------- | -----: | ---: |
+| `@babywbx/liveflow`                | `CONTRACT_VERSION`、共享类型与类型化错误 |      — |    — |
+| `@babywbx/liveflow/continuity`     | 连续性控制器与播放器 adapter 契约        | 4.1 KB | 6 KB |
+| `@babywbx/liveflow/danmaku`        | 有界弹幕调度核心                         | 4.9 KB | 7 KB |
+| `@babywbx/liveflow/danmaku/dom`    | 安全结构化 DOM renderer 与颜色工具       | 2.8 KB | 4 KB |
+| `@babywbx/liveflow/overlay`        | 实时事件引擎与共享预算协调器             | 5.6 KB | 8 KB |
+| `@babywbx/liveflow/overlay/banner` | 事件横幅呈现器（可选，按需加载）         | 3.2 KB | 5 KB |
+| `@babywbx/liveflow/chrome`         | 播放器控件显隐控制器（空闲隐藏与常驻）   | 1.4 KB | 2 KB |
+| `@babywbx/liveflow/multiview`      | 多路宫格布局数学与网格轨道声明           | 0.9 KB | 2 KB |
+| `@babywbx/liveflow/native-video`   | 原生 `<video>` adapter                   | 3.0 KB | 4 KB |
+| `@babywbx/liveflow/page-activity`  | 页面可见性来源（省电暂停续播）           | 0.5 KB | 2 KB |
+| `@babywbx/liveflow/artplayer`      | 零静态播放器依赖的 ArtPlayer-like seam   | 3.0 KB | 4 KB |
 
 体积由 `pnpm size:check` 压缩后 gzip 实测，超过预算列即 CI 失败。四个核心子路径合并实测
 15.7 KB，冻结上限 20 KB。
@@ -696,6 +697,7 @@ const tracks = multiviewGridTracks(spec) // { gridTemplateColumns, gridTemplateR
 | [弹幕调度](./docs/reference/danmaku.md)             | [有界实时性](./docs/explanation/bounded-realtime.md)       |
 | [DOM 弹幕渲染器](./docs/reference/danmaku-dom.md)   | [结构化身份](./docs/explanation/structured-identities.md)  |
 | [Realtime Overlay API](./docs/reference/overlay.md) |                                                            |
+| [事件横幅呈现器](./docs/reference/event-banner.md)  |                                                            |
 | [多路宫格布局](./docs/reference/multiview.md)       |                                                            |
 | [播放器控件显隐](./docs/reference/chrome.md)        |                                                            |
 | [播放器适配器](./docs/reference/adapters.md)        |                                                            |

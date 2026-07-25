@@ -40,6 +40,10 @@
       "types": "./dist/overlay/index.d.ts",
       "import": "./dist/overlay/index.js"
     },
+    "./overlay/banner": {
+      "types": "./dist/overlay/banner.d.ts",
+      "import": "./dist/overlay/banner.js"
+    },
     "./chrome": {
       "types": "./dist/chrome/index.d.ts",
       "import": "./dist/chrome/index.js"

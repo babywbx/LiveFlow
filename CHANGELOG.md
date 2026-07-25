@@ -8,6 +8,8 @@
 
 ### 新增
 
+- 事件横幅呈现器（`@babywbx/liveflow/overlay`）：有界活动集合、字号阶梯与截断、素材失败
+  就地降级为紧凑样式、注入式渲染面，平台素材与文案仍留在调用方。
 - 播放器控件显隐控制器 `@babywbx/liveflow/chrome`：移动唤起、空闲隐藏、pin 计数、
   focus-within 与播放期常驻，时间走注入的 `Clock`，与框架无关。
 - 多路宫格布局模块 `@babywbx/liveflow/multiview`：网格阶梯、等比瓦片盒，以及列与行成对给出的

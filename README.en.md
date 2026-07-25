@@ -225,18 +225,19 @@ overlay.submit({
 Every engine and adapter is a separate ESM subpath. The root entry exports only the shared contract
 and never statically pulls in an engine or a player runtime.
 
-| Subpath                           | Provides                                             |   gzip | Budget |
-| --------------------------------- | ---------------------------------------------------- | -----: | -----: |
-| `@babywbx/liveflow`               | `CONTRACT_VERSION`, shared types, typed errors       |      — |      — |
-| `@babywbx/liveflow/continuity`    | Continuity controller and player adapter contract    | 4.1 KB |   6 KB |
-| `@babywbx/liveflow/danmaku`       | Bounded danmaku scheduler                            | 4.9 KB |   7 KB |
-| `@babywbx/liveflow/danmaku/dom`   | Safe structured DOM renderer and color helpers       | 2.8 KB |   4 KB |
-| `@babywbx/liveflow/overlay`       | Realtime event engine and shared budget coordinator  | 5.6 KB |   8 KB |
-| `@babywbx/liveflow/chrome`        | Player chrome visibility controller                  | 1.4 KB |   2 KB |
-| `@babywbx/liveflow/multiview`     | Multiview grid layout math and grid track contract   | 0.9 KB |   2 KB |
-| `@babywbx/liveflow/native-video`  | Native `<video>` adapter                             | 3.0 KB |   4 KB |
-| `@babywbx/liveflow/page-activity` | Page visibility source for suspended playback        | 0.5 KB |   2 KB |
-| `@babywbx/liveflow/artplayer`     | ArtPlayer-like seam with no static player dependency | 3.0 KB |   4 KB |
+| Subpath                            | Provides                                             |   gzip | Budget |
+| ---------------------------------- | ---------------------------------------------------- | -----: | -----: |
+| `@babywbx/liveflow`                | `CONTRACT_VERSION`, shared types, typed errors       |      — |      — |
+| `@babywbx/liveflow/continuity`     | Continuity controller and player adapter contract    | 4.1 KB |   6 KB |
+| `@babywbx/liveflow/danmaku`        | Bounded danmaku scheduler                            | 4.9 KB |   7 KB |
+| `@babywbx/liveflow/danmaku/dom`    | Safe structured DOM renderer and color helpers       | 2.8 KB |   4 KB |
+| `@babywbx/liveflow/overlay`        | Realtime event engine and shared budget coordinator  | 5.6 KB |   8 KB |
+| `@babywbx/liveflow/overlay/banner` | Event banner presenter (optional)                    | 3.2 KB |   5 KB |
+| `@babywbx/liveflow/chrome`         | Player chrome visibility controller                  | 1.4 KB |   2 KB |
+| `@babywbx/liveflow/multiview`      | Multiview grid layout math and grid track contract   | 0.9 KB |   2 KB |
+| `@babywbx/liveflow/native-video`   | Native `<video>` adapter                             | 3.0 KB |   4 KB |
+| `@babywbx/liveflow/page-activity`  | Page visibility source for suspended playback        | 0.5 KB |   2 KB |
+| `@babywbx/liveflow/artplayer`      | ArtPlayer-like seam with no static player dependency | 3.0 KB |   4 KB |
 
 Measured minified and gzipped by `pnpm size:check`, which fails CI on any regression past the
 budget column. The four core subpaths combined measure 15.1 KB against a 20 KB ceiling.
@@ -720,18 +721,19 @@ It is written in Chinese; API names and code samples are language-independent.
 |                                                                      | [Shared overlay budget](./docs/how-to/shared-overlay-budget.md) |
 |                                                                      | [Run the soak test](./docs/how-to/run-soak.md)                  |
 
-| Reference                                       | Explanation                                                          |
-| ----------------------------------------------- | -------------------------------------------------------------------- |
-| [Shared contract](./docs/reference/shared.md)   | [Architecture](./docs/explanation/architecture.md)                   |
-| [Continuity](./docs/reference/continuity.md)    | [Generation gating](./docs/explanation/generation-gating.md)         |
-| [Danmaku](./docs/reference/danmaku.md)          | [Bounded realtime](./docs/explanation/bounded-realtime.md)           |
-| [DOM renderer](./docs/reference/danmaku-dom.md) | [Structured identities](./docs/explanation/structured-identities.md) |
-| [Overlay](./docs/reference/overlay.md)          |                                                                      |
-| [Multiview](./docs/reference/multiview.md)      |                                                                      |
-| [Chrome visibility](./docs/reference/chrome.md) |                                                                      |
-| [Adapters](./docs/reference/adapters.md)        |                                                                      |
-| [Diagnostics](./docs/reference/diagnostics.md)  |                                                                      |
-| [Errors](./docs/reference/errors.md)            |                                                                      |
+| Reference                                                  | Explanation                                                          |
+| ---------------------------------------------------------- | -------------------------------------------------------------------- |
+| [Shared contract](./docs/reference/shared.md)              | [Architecture](./docs/explanation/architecture.md)                   |
+| [Continuity](./docs/reference/continuity.md)               | [Generation gating](./docs/explanation/generation-gating.md)         |
+| [Danmaku](./docs/reference/danmaku.md)                     | [Bounded realtime](./docs/explanation/bounded-realtime.md)           |
+| [DOM renderer](./docs/reference/danmaku-dom.md)            | [Structured identities](./docs/explanation/structured-identities.md) |
+| [Overlay](./docs/reference/overlay.md)                     |                                                                      |
+| [Event banner presenter](./docs/reference/event-banner.md) |                                                                      |
+| [Multiview](./docs/reference/multiview.md)                 |                                                                      |
+| [Chrome visibility](./docs/reference/chrome.md)            |                                                                      |
+| [Adapters](./docs/reference/adapters.md)                   |                                                                      |
+| [Diagnostics](./docs/reference/diagnostics.md)             |                                                                      |
+| [Errors](./docs/reference/errors.md)                       |                                                                      |
 
 <div align="right">
 

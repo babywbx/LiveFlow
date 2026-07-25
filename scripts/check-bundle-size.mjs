@@ -24,6 +24,11 @@ const targets = [
     maxGzipBytes: 8 * 1024,
   },
   {
+    label: './overlay/banner',
+    path: './dist/overlay/banner.js',
+    maxGzipBytes: 5 * 1024,
+  },
+  {
     label: './chrome',
     path: './dist/chrome/index.js',
     maxGzipBytes: 2 * 1024,
