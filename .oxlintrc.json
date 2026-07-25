@@ -220,8 +220,10 @@
     },
     {
       "files": [
+        "src/chrome/**/*.ts",
         "src/continuity/**/*.ts",
         "src/danmaku/**/*.ts",
+        "src/multiview/**/*.ts",
         "src/overlay/**/*.ts",
         "src/shared/**/*.ts"
       ],

@@ -40,9 +40,21 @@
       "types": "./dist/overlay/index.d.ts",
       "import": "./dist/overlay/index.js"
     },
+    "./chrome": {
+      "types": "./dist/chrome/index.d.ts",
+      "import": "./dist/chrome/index.js"
+    },
+    "./multiview": {
+      "types": "./dist/multiview/index.d.ts",
+      "import": "./dist/multiview/index.js"
+    },
     "./native-video": {
       "types": "./dist/adapters/native-video.d.ts",
       "import": "./dist/adapters/native-video.js"
+    },
+    "./page-activity": {
+      "types": "./dist/adapters/document-page-activity.d.ts",
+      "import": "./dist/adapters/document-page-activity.js"
     },
     "./artplayer": {
       "types": "./dist/adapters/artplayer.d.ts",

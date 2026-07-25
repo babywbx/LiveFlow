@@ -220,18 +220,21 @@ overlay.submit({
 
 每个引擎和 adapter 都是独立 ESM 子路径。根入口只导出共享契约，绝不静态加载引擎或播放器运行时。
 
-| 子路径                           | 内容                                     |   gzip | 预算 |
-| -------------------------------- | ---------------------------------------- | -----: | ---: |
-| `@babywbx/liveflow`              | `CONTRACT_VERSION`、共享类型与类型化错误 |      — |    — |
-| `@babywbx/liveflow/continuity`   | 连续性控制器与播放器 adapter 契约        | 4.1 KB | 6 KB |
-| `@babywbx/liveflow/danmaku`      | 有界弹幕调度核心                         | 4.9 KB | 7 KB |
-| `@babywbx/liveflow/danmaku/dom`  | 安全结构化 DOM renderer 与颜色工具       | 2.8 KB | 4 KB |
-| `@babywbx/liveflow/overlay`      | 实时事件引擎与共享预算协调器             | 5.6 KB | 8 KB |
-| `@babywbx/liveflow/native-video` | 原生 `<video>` adapter                   | 3.0 KB | 4 KB |
-| `@babywbx/liveflow/artplayer`    | 零静态播放器依赖的 ArtPlayer-like seam   | 3.0 KB | 4 KB |
+| 子路径                            | 内容                                     |   gzip | 预算 |
+| --------------------------------- | ---------------------------------------- | -----: | ---: |
+| `@babywbx/liveflow`               | `CONTRACT_VERSION`、共享类型与类型化错误 |      — |    — |
+| `@babywbx/liveflow/continuity`    | 连续性控制器与播放器 adapter 契约        | 4.1 KB | 6 KB |
+| `@babywbx/liveflow/danmaku`       | 有界弹幕调度核心                         | 4.9 KB | 7 KB |
+| `@babywbx/liveflow/danmaku/dom`   | 安全结构化 DOM renderer 与颜色工具       | 2.8 KB | 4 KB |
+| `@babywbx/liveflow/overlay`       | 实时事件引擎与共享预算协调器             | 5.6 KB | 8 KB |
+| `@babywbx/liveflow/chrome`        | 播放器控件显隐控制器（空闲隐藏与常驻）   | 1.4 KB | 2 KB |
+| `@babywbx/liveflow/multiview`     | 多路宫格布局数学与网格轨道声明           | 0.9 KB | 2 KB |
+| `@babywbx/liveflow/native-video`  | 原生 `<video>` adapter                   | 3.0 KB | 4 KB |
+| `@babywbx/liveflow/page-activity` | 页面可见性来源（省电暂停续播）           | 0.5 KB | 2 KB |
+| `@babywbx/liveflow/artplayer`     | 零静态播放器依赖的 ArtPlayer-like seam   | 3.0 KB | 4 KB |
 
 体积由 `pnpm size:check` 压缩后 gzip 实测，超过预算列即 CI 失败。四个核心子路径合并实测
-15.1 KB，冻结上限 20 KB。
+15.7 KB，冻结上限 20 KB。
 
 <div align="right">
 
@@ -515,6 +518,32 @@ grant 的 `presentation` 取 `full`、`compact` 或 `suppressed`，按焦点、�
 [Realtime Overlay API](./docs/reference/overlay.md)、
 [配置多播放器共享预算](./docs/how-to/shared-overlay-budget.md)。
 
+### 多路宫格 —— `@babywbx/liveflow/multiview`
+
+```ts
+import {
+  multiviewGridBox,
+  multiviewGridSpec,
+  multiviewGridTracks,
+} from '@babywbx/liveflow/multiview'
+
+const spec = multiviewGridSpec(7) // { columns: 3, rows: 3, placeholders: 2 }
+const box = multiviewGridBox({ stage, spec, gap: 12 }) // 恒为 16:9 的瓦片，整体落在舞台内
+const tracks = multiviewGridTracks(spec) // { gridTemplateColumns, gridTemplateRows }
+```
+
+一组无状态纯函数：把瓦片数量映射成网格阶梯，按固定宽高比算出居中的瓦片盒，并给出与之匹配的 CSS
+轨道声明。默认上限九路，`maxTiles` 可由调用方提高；瓦片数超过上限抛出 `CapacityExceededError`，
+不会静默截断。舞台为空或间距吃掉全部空间时返回零盒 —— 那是「没有可用空间」而不是失败；非法参数
+一律抛出 `InvalidMultiviewLayoutError`。
+
+> \[!IMPORTANT\]
+> 列轨道与行轨道必须一起写进样式。只声明列时行轨道是隐式 `auto`，占位元素会撑高所在行，瓦片不再
+> 保持 16:9，视频两侧出现黑边。瓦片盒的数学只有在行轨道同样均分时才成立，因此两条轨道由同一个
+> 返回值给出。
+
+参考：[多路宫格布局](./docs/reference/multiview.md)。
+
 ### 错误
 
 全部公开错误继承 `LiveFlowError`，并带稳定 `code`。用 `instanceof LiveFlowError` 识别错误族，按
@@ -532,6 +561,7 @@ grant 的 `presentation` 取 `full`、`compact` 或 `suppressed`，按焦点、�
 | `InvalidDanmakuMessageError`            | `invalid-danmaku-message`             |
 | `InvalidOverlayEventError`              | `invalid-overlay-event`               |
 | `OverlayCapacityError`                  | `overlay-capacity-exceeded`           |
+| `InvalidMultiviewLayoutError`           | `invalid-multiview-layout`            |
 | `PlayerAdapterError`                    | 按操作区分的稳定错误码                |
 
 包含配置、时钟、渲染、调度与清理错误的完整表格见[错误类型](./docs/reference/errors.md)。
@@ -647,16 +677,17 @@ grant 的 `presentation` 取 `full`、`compact` 或 `suppressed`，按焦点、�
 
 公开文档位于 [`docs/`](./docs/reference/shared.md)，分为教程、操作指南、参考和说明四类。
 
-| 教程                                                          | 操作指南                                                         |
-| ------------------------------------------------------------- | ---------------------------------------------------------------- |
-| [十分钟接入原生 video](./docs/tutorials/native-video.md)      | [以 Git 依赖安装](./docs/how-to/install-from-git.md)             |
-| [显示结构化弹幕](./docs/tutorials/structured-danmaku.md)      | [配置弱网恢复](./docs/how-to/configure-recovery.md)              |
-| [注册实时事件 renderer](./docs/tutorials/overlay-renderer.md) | [配置过载策略](./docs/how-to/configure-overload.md)              |
-|                                                               | [自定义身份渲染](./docs/how-to/custom-identity.md)               |
-|                                                               | [实现自定义播放器适配器](./docs/how-to/custom-player-adapter.md) |
-|                                                               | [转发诊断事件](./docs/how-to/forward-diagnostics.md)             |
-|                                                               | [配置多播放器共享预算](./docs/how-to/shared-overlay-budget.md)   |
-|                                                               | [运行耐久压力测试](./docs/how-to/run-soak.md)                    |
+| 教程                                                          | 操作指南                                                             |
+| ------------------------------------------------------------- | -------------------------------------------------------------------- |
+| [十分钟接入原生 video](./docs/tutorials/native-video.md)      | [以 Git 依赖安装](./docs/how-to/install-from-git.md)                 |
+| [显示结构化弹幕](./docs/tutorials/structured-danmaku.md)      | [配置弱网恢复](./docs/how-to/configure-recovery.md)                  |
+| [注册实时事件 renderer](./docs/tutorials/overlay-renderer.md) | [配置过载策略](./docs/how-to/configure-overload.md)                  |
+|                                                               | [自定义身份渲染](./docs/how-to/custom-identity.md)                   |
+|                                                               | [实现自定义播放器适配器](./docs/how-to/custom-player-adapter.md)     |
+|                                                               | [转发诊断事件](./docs/how-to/forward-diagnostics.md)                 |
+|                                                               | [配置多播放器共享预算](./docs/how-to/shared-overlay-budget.md)       |
+|                                                               | [运行耐久压力测试](./docs/how-to/run-soak.md)                        |
+|                                                               | [处理被浏览器拒绝的播放](./docs/how-to/handle-suspended-playback.md) |
 
 | 参考                                                | 说明                                                       |
 | --------------------------------------------------- | ---------------------------------------------------------- |
@@ -665,6 +696,8 @@ grant 的 `presentation` 取 `full`、`compact` 或 `suppressed`，按焦点、�
 | [弹幕调度](./docs/reference/danmaku.md)             | [有界实时性](./docs/explanation/bounded-realtime.md)       |
 | [DOM 弹幕渲染器](./docs/reference/danmaku-dom.md)   | [结构化身份](./docs/explanation/structured-identities.md)  |
 | [Realtime Overlay API](./docs/reference/overlay.md) |                                                            |
+| [多路宫格布局](./docs/reference/multiview.md)       |                                                            |
+| [播放器控件显隐](./docs/reference/chrome.md)        |                                                            |
 | [播放器适配器](./docs/reference/adapters.md)        |                                                            |
 | [指标与诊断码](./docs/reference/diagnostics.md)     |                                                            |
 | [错误类型](./docs/reference/errors.md)              |                                                            |

@@ -225,15 +225,18 @@ overlay.submit({
 Every engine and adapter is a separate ESM subpath. The root entry exports only the shared contract
 and never statically pulls in an engine or a player runtime.
 
-| Subpath                          | Provides                                             |   gzip | Budget |
-| -------------------------------- | ---------------------------------------------------- | -----: | -----: |
-| `@babywbx/liveflow`              | `CONTRACT_VERSION`, shared types, typed errors       |      — |      — |
-| `@babywbx/liveflow/continuity`   | Continuity controller and player adapter contract    | 4.1 KB |   6 KB |
-| `@babywbx/liveflow/danmaku`      | Bounded danmaku scheduler                            | 4.9 KB |   7 KB |
-| `@babywbx/liveflow/danmaku/dom`  | Safe structured DOM renderer and color helpers       | 2.8 KB |   4 KB |
-| `@babywbx/liveflow/overlay`      | Realtime event engine and shared budget coordinator  | 5.6 KB |   8 KB |
-| `@babywbx/liveflow/native-video` | Native `<video>` adapter                             | 3.0 KB |   4 KB |
-| `@babywbx/liveflow/artplayer`    | ArtPlayer-like seam with no static player dependency | 3.0 KB |   4 KB |
+| Subpath                           | Provides                                             |   gzip | Budget |
+| --------------------------------- | ---------------------------------------------------- | -----: | -----: |
+| `@babywbx/liveflow`               | `CONTRACT_VERSION`, shared types, typed errors       |      — |      — |
+| `@babywbx/liveflow/continuity`    | Continuity controller and player adapter contract    | 4.1 KB |   6 KB |
+| `@babywbx/liveflow/danmaku`       | Bounded danmaku scheduler                            | 4.9 KB |   7 KB |
+| `@babywbx/liveflow/danmaku/dom`   | Safe structured DOM renderer and color helpers       | 2.8 KB |   4 KB |
+| `@babywbx/liveflow/overlay`       | Realtime event engine and shared budget coordinator  | 5.6 KB |   8 KB |
+| `@babywbx/liveflow/chrome`        | Player chrome visibility controller                  | 1.4 KB |   2 KB |
+| `@babywbx/liveflow/multiview`     | Multiview grid layout math and grid track contract   | 0.9 KB |   2 KB |
+| `@babywbx/liveflow/native-video`  | Native `<video>` adapter                             | 3.0 KB |   4 KB |
+| `@babywbx/liveflow/page-activity` | Page visibility source for suspended playback        | 0.5 KB |   2 KB |
+| `@babywbx/liveflow/artplayer`     | ArtPlayer-like seam with no static player dependency | 3.0 KB |   4 KB |
 
 Measured minified and gzipped by `pnpm size:check`, which fails CI on any regression past the
 budget column. The four core subpaths combined measure 15.1 KB against a 20 KB ceiling.
@@ -537,6 +540,34 @@ event priority, and request order. `activeCards`, `activeFull`, and `activeHighC
 their configured ceilings. Reference: [Overlay](./docs/reference/overlay.md),
 [Shared overlay budget](./docs/how-to/shared-overlay-budget.md).
 
+### Multiview — `@babywbx/liveflow/multiview`
+
+```ts
+import {
+  multiviewGridBox,
+  multiviewGridSpec,
+  multiviewGridTracks,
+} from '@babywbx/liveflow/multiview'
+
+const spec = multiviewGridSpec(7) // { columns: 3, rows: 3, placeholders: 2 }
+const box = multiviewGridBox({ stage, spec, gap: 12 }) // tiles stay 16:9 inside the stage
+const tracks = multiviewGridTracks(spec) // { gridTemplateColumns, gridTemplateRows }
+```
+
+Stateless pure functions: map a tile count onto a grid ladder, derive a centered tile box for a fixed
+aspect ratio, and emit the matching CSS track declarations. The ceiling defaults to nine tiles and the
+caller may raise `maxTiles`; going past it throws `CapacityExceededError` instead of silently
+truncating. An empty stage, or a gap that consumes all available space, returns a zero box — that is
+an absence of space, not a failure. Illegal arguments always throw `InvalidMultiviewLayoutError`.
+
+> \[!IMPORTANT\]
+> Column and row tracks must be applied together. Declaring columns alone leaves the row track at the
+> implicit `auto`, where placeholder elements stretch their row, tiles stop being 16:9, and the video
+> gains pillarboxes. The tile box math only holds when rows are evenly divided too, which is why both
+> tracks come from one return value.
+
+Reference: [Multiview](./docs/reference/multiview.md).
+
 ### Errors
 
 Every public error extends `LiveFlowError` and carries a stable `code`. Match on
@@ -554,6 +585,7 @@ Every public error extends `LiveFlowError` and carries a stable `code`. Match on
 | `InvalidDanmakuMessageError`            | `invalid-danmaku-message`             |
 | `InvalidOverlayEventError`              | `invalid-overlay-event`               |
 | `OverlayCapacityError`                  | `overlay-capacity-exceeded`           |
+| `InvalidMultiviewLayoutError`           | `invalid-multiview-layout`            |
 | `PlayerAdapterError`                    | Stable per-operation codes            |
 
 The full table, including configuration, clock, renderer, scheduling, and cleanup errors, is in
@@ -695,6 +727,8 @@ It is written in Chinese; API names and code samples are language-independent.
 | [Danmaku](./docs/reference/danmaku.md)          | [Bounded realtime](./docs/explanation/bounded-realtime.md)           |
 | [DOM renderer](./docs/reference/danmaku-dom.md) | [Structured identities](./docs/explanation/structured-identities.md) |
 | [Overlay](./docs/reference/overlay.md)          |                                                                      |
+| [Multiview](./docs/reference/multiview.md)      |                                                                      |
+| [Chrome visibility](./docs/reference/chrome.md) |                                                                      |
 | [Adapters](./docs/reference/adapters.md)        |                                                                      |
 | [Diagnostics](./docs/reference/diagnostics.md)  |                                                                      |
 | [Errors](./docs/reference/errors.md)            |                                                                      |

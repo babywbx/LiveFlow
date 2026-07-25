@@ -24,9 +24,24 @@ const targets = [
     maxGzipBytes: 8 * 1024,
   },
   {
+    label: './chrome',
+    path: './dist/chrome/index.js',
+    maxGzipBytes: 2 * 1024,
+  },
+  {
+    label: './multiview',
+    path: './dist/multiview/index.js',
+    maxGzipBytes: 2 * 1024,
+  },
+  {
     label: './native-video',
     path: './dist/adapters/native-video.js',
     maxGzipBytes: 4 * 1024,
+  },
+  {
+    label: './page-activity',
+    path: './dist/adapters/document-page-activity.js',
+    maxGzipBytes: 2 * 1024,
   },
   {
     label: './artplayer',

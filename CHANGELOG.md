@@ -6,6 +6,24 @@
 
 ## [未发布]
 
+### 新增
+
+- 播放器控件显隐控制器 `@babywbx/liveflow/chrome`：移动唤起、空闲隐藏、pin 计数、
+  focus-within 与播放期常驻，时间走注入的 `Clock`，与框架无关。
+- 多路宫格布局模块 `@babywbx/liveflow/multiview`：网格阶梯、等比瓦片盒，以及列与行成对给出的
+  显式 CSS 轨道声明。
+- 连续性快照新增 `healthySince`：当前健康连播的起始时钟读数，调用方据此清除重试退避，
+  不再把「地址取到了」误当成「播放成功了」。
+- 连续性新增 `suspended` 状态与 `resume()`：浏览器省电暂停（`AbortError`）与自动播放
+  拦截（`NotAllowedError`）不再被当作换源失败。
+- 可注入的 `PageActivitySource`，以及基于 `visibilitychange` 的
+  `@babywbx/liveflow/page-activity` 实现，页面重新可见时自动续播。
+
+### 变更
+
+- `SourceTransitionError` 新增脱敏的 `reason`（仅上游错误类名），仍不携带 `cause` 与
+  上游 message，避免签名媒体 URL 外泄。
+
 ## [1.0.0] - 2026-07-23
 
 ### 新增
