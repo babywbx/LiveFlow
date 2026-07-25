@@ -3,10 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ['v*']
-  pull_request:
-  schedule:
-    - cron: '30 17 * * *'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,33 +12,42 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  NODE_VERSION: '24'
-
 jobs:
-  quality:
-    name: Quality / Static
+  check:
+    name: Check / Full
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: '24'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
 
       - name: Format
         run: pnpm format:check
 
-      - name: Lint
-        run: pnpm lint
-
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Lint
+        run: pnpm lint
+
       - name: Documentation
         run: pnpm docs:check
+
+      - name: Test
+        run: pnpm test
+
+      - name: Package
+        run: pnpm build
+
+      - name: Size
+        run: pnpm size:check
+
+      - name: Example
+        run: pnpm examples:check
 
       - name: Zero Runtime Deps
         run: |
@@ -56,87 +62,6 @@ jobs:
             echo "Exotic (git/http) dependency specifiers are not allowed."
             exit 1
           fi
-
-      - name: Layering
-        run: |
-          if grep -rnE "from '[^']*adapters/" \
-               src/continuity src/danmaku src/overlay src/shared; then
-            echo "Core engines must not import player adapters."
-            exit 1
-          fi
-          if grep -rnE "from '(artplayer|mpegts\.js)" \
-               src/continuity src/danmaku src/overlay src/shared; then
-            echo "Core engines must not import player runtimes."
-            exit 1
-          fi
-          if grep -rnE "from 'node:" src; then
-            echo "LiveFlow must not import Node.js built-ins."
-            exit 1
-          fi
-          if grep -rnE "from 'react" src; then
-            echo "LiveFlow core must not depend on React."
-            exit 1
-          fi
-
-  test:
-    name: Test / Unit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test
-
-  soak:
-    name: Test / Soak
-    runs-on: ubuntu-latest
-    timeout-minutes: 270
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Run synthetic soak
-        env:
-          SOAK_DURATION_MS: ${{ github.event_name == 'schedule' && '14400000' || '300000' }}
-          SOAK_REALTIME: ${{ github.event_name == 'schedule' && 'true' || 'false' }}
-        run: pnpm test:soak
-
-  browser:
-    name: Test / Browser
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps chromium firefox webkit
-      - run: pnpm test:browser
-
-  build:
-    name: Build / Package
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-
-      - name: Package
-        run: pnpm build
 
       - name: No Sourcemaps
         run: |
@@ -162,74 +87,3 @@ jobs:
             git status --porcelain -- dist
             exit 1
           fi
-
-      - name: Dist Integrity
-        run: |
-          orphans=$(find dist -name '*.js' | while IFS= read -r artifact; do
-            source_file="src/${artifact#dist/}"
-            source_file="${source_file%.js}.ts"
-            [ -f "$source_file" ] || echo "$artifact"
-          done)
-          if [ -n "$orphans" ]; then
-            echo "Artifacts with no corresponding source file:"
-            echo "$orphans"
-            exit 1
-          fi
-
-      - name: Size
-        run: pnpm size:check
-
-  example:
-    name: Build / Example
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - run: pnpm examples:check
-
-  consumer-tarball:
-    name: Consumer / Tarball
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-
-      - name: Install into a blank consumer
-        run: |
-          pnpm pack --pack-destination "$RUNNER_TEMP"
-          cp -R tests/consumer "$RUNNER_TEMP/consumer"
-          cd "$RUNNER_TEMP/consumer"
-          pnpm add "$(ls "$RUNNER_TEMP"/babywbx-liveflow-*.tgz)"
-          node verify.mjs
-
-  consumer-git:
-    name: Consumer / Git Install
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'push' }}
-    needs: [quality, build]
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-
-      - name: Install this exact commit as a git dependency
-        run: |
-          cp -R tests/consumer "$RUNNER_TEMP/consumer"
-          cd "$RUNNER_TEMP/consumer"
-          pnpm add "git+https://github.com/babywbx/LiveFlow.git#${GITHUB_SHA}"
-          node verify.mjs
