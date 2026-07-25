@@ -64,6 +64,18 @@
       "types": "./dist/adapters/artplayer.d.ts",
       "import": "./dist/adapters/artplayer.js"
     },
+    "./dplayer": {
+      "types": "./dist/adapters/dplayer.d.ts",
+      "import": "./dist/adapters/dplayer.js"
+    },
+    "./videojs": {
+      "types": "./dist/adapters/videojs.d.ts",
+      "import": "./dist/adapters/videojs.js"
+    },
+    "./xgplayer": {
+      "types": "./dist/adapters/xgplayer.d.ts",
+      "import": "./dist/adapters/xgplayer.js"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {

@@ -5,6 +5,9 @@ import { createDomDanmakuRenderer } from '@babywbx/liveflow/danmaku/dom'
 import { createOverlayBudgetCoordinator, createOverlayEngine } from '@babywbx/liveflow/overlay'
 import { createNativeVideoAdapter } from '@babywbx/liveflow/native-video'
 import { createArtPlayerAdapter } from '@babywbx/liveflow/artplayer'
+import { createDPlayerAdapter } from '@babywbx/liveflow/dplayer'
+import { createVideoJsAdapter } from '@babywbx/liveflow/videojs'
+import { createXgPlayerAdapter } from '@babywbx/liveflow/xgplayer'
 
 const subpaths = [
   '@babywbx/liveflow/continuity',
@@ -13,6 +16,9 @@ const subpaths = [
   '@babywbx/liveflow/overlay',
   '@babywbx/liveflow/native-video',
   '@babywbx/liveflow/artplayer',
+  '@babywbx/liveflow/dplayer',
+  '@babywbx/liveflow/videojs',
+  '@babywbx/liveflow/xgplayer',
 ]
 
 for (const subpath of subpaths) {
@@ -43,6 +49,9 @@ for (const [name, factory] of [
   ['createOverlayBudgetCoordinator', createOverlayBudgetCoordinator],
   ['createNativeVideoAdapter', createNativeVideoAdapter],
   ['createArtPlayerAdapter', createArtPlayerAdapter],
+  ['createDPlayerAdapter', createDPlayerAdapter],
+  ['createVideoJsAdapter', createVideoJsAdapter],
+  ['createXgPlayerAdapter', createXgPlayerAdapter],
 ]) {
   if (typeof factory !== 'function') {
     fail(`${name} is not callable from the built package.`)

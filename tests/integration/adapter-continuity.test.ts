@@ -5,12 +5,15 @@ import {
   type ArtPlayerLike,
   type ArtPlayerSurface,
 } from '../../src/adapters/artplayer.js'
+import { createDPlayerAdapter, type DPlayerLike } from '../../src/adapters/dplayer.js'
 import {
   createNativeVideoAdapter,
   type NativeVideoSurface,
   type TimeRangesLike,
   type VideoElementLike,
 } from '../../src/adapters/native-video.js'
+import { createVideoJsAdapter, type VideoJsPlayerLike } from '../../src/adapters/videojs.js'
+import { createXgPlayerAdapter, type XgPlayerLike } from '../../src/adapters/xgplayer.js'
 import { createContinuityController, type LivePlayerAdapter } from '../../src/continuity/index.js'
 import { CONTRACT_VERSION } from '../../src/index.js'
 
@@ -140,6 +143,87 @@ class HarnessArtSurface implements ArtPlayerSurface {
   remove(_player: ArtPlayerLike): void {}
 }
 
+class HarnessNoopSurface {
+  stage(_player: unknown): void {}
+
+  reveal(_player: unknown, _previous: unknown): void {}
+
+  remove(_player: unknown): void {}
+}
+
+class HarnessDPlayer implements DPlayerLike {
+  readonly video = new HarnessVideo()
+  private readonly listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>()
+
+  on(event: string, handler: (...args: readonly unknown[]) => void): void {
+    const listeners = this.listeners.get(event) ?? new Set()
+    listeners.add(handler)
+    this.listeners.set(event, listeners)
+  }
+
+  destroy(): void {}
+
+  emitPlaying(): void {
+    for (const listener of this.listeners.get('playing') ?? []) {
+      listener()
+    }
+  }
+}
+
+class HarnessVideoJs implements VideoJsPlayerLike {
+  readonly video = new HarnessVideo()
+  private readonly host = {
+    querySelector: (selectors: string): unknown => (selectors === 'video' ? this.video : null),
+  }
+
+  private readonly listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>()
+
+  el(): { querySelector(selectors: string): unknown } {
+    return this.host
+  }
+
+  on(event: string, handler: (...args: readonly unknown[]) => void): void {
+    const listeners = this.listeners.get(event) ?? new Set()
+    listeners.add(handler)
+    this.listeners.set(event, listeners)
+  }
+
+  off(event: string, handler: (...args: readonly unknown[]) => void): void {
+    this.listeners.get(event)?.delete(handler)
+  }
+
+  dispose(): void {}
+
+  emitPlaying(): void {
+    for (const listener of this.listeners.get('playing') ?? []) {
+      listener()
+    }
+  }
+}
+
+class HarnessXgPlayer implements XgPlayerLike {
+  readonly media = new HarnessVideo()
+  private readonly listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>()
+
+  on(event: string, handler: (...args: readonly unknown[]) => void): void {
+    const listeners = this.listeners.get(event) ?? new Set()
+    listeners.add(handler)
+    this.listeners.set(event, listeners)
+  }
+
+  off(event: string, handler: (...args: readonly unknown[]) => void): void {
+    this.listeners.get(event)?.delete(handler)
+  }
+
+  destroy(): void {}
+
+  emitPlaying(): void {
+    for (const listener of this.listeners.get('playing') ?? []) {
+      listener()
+    }
+  }
+}
+
 interface AdapterHarness {
   readonly adapter: LivePlayerAdapter
   emitCandidatePlaying(): void
@@ -186,9 +270,78 @@ function createArtHarness(): AdapterHarness {
   }
 }
 
+function createDPlayerHarness(): AdapterHarness {
+  let candidate: HarnessDPlayer | null = null
+  const adapter = createDPlayerAdapter({
+    player: new HarnessDPlayer(),
+    createPlayer(): Promise<DPlayerLike> {
+      const player = new HarnessDPlayer()
+      candidate = player
+      return Promise.resolve(player)
+    },
+    surface: new HarnessNoopSurface(),
+  })
+  return {
+    adapter,
+    emitCandidatePlaying(): void {
+      requireCandidate(candidate).emitPlaying()
+    },
+    renderCandidateFrame(): void {
+      requireCandidate(candidate).video.renderFrame()
+    },
+  }
+}
+
+function createVideoJsHarness(): AdapterHarness {
+  let candidate: HarnessVideoJs | null = null
+  const adapter = createVideoJsAdapter({
+    player: new HarnessVideoJs(),
+    createPlayer(): Promise<VideoJsPlayerLike> {
+      const player = new HarnessVideoJs()
+      candidate = player
+      return Promise.resolve(player)
+    },
+    surface: new HarnessNoopSurface(),
+  })
+  return {
+    adapter,
+    emitCandidatePlaying(): void {
+      requireCandidate(candidate).emitPlaying()
+    },
+    renderCandidateFrame(): void {
+      requireCandidate(candidate).video.renderFrame()
+    },
+  }
+}
+
+function createXgPlayerHarness(): AdapterHarness {
+  let candidate: HarnessXgPlayer | null = null
+  const adapter = createXgPlayerAdapter({
+    player: new HarnessXgPlayer(),
+    createPlayer(): Promise<XgPlayerLike> {
+      const player = new HarnessXgPlayer()
+      candidate = player
+      return Promise.resolve(player)
+    },
+    surface: new HarnessNoopSurface(),
+  })
+  return {
+    adapter,
+    emitCandidatePlaying(): void {
+      requireCandidate(candidate).emitPlaying()
+    },
+    renderCandidateFrame(): void {
+      requireCandidate(candidate).media.renderFrame()
+    },
+  }
+}
+
 const adapterFactories = [
   ['native video', createNativeHarness],
   ['ArtPlayer-like', createArtHarness],
+  ['DPlayer-like', createDPlayerHarness],
+  ['Video.js-like', createVideoJsHarness],
+  ['XGPlayer-like', createXgPlayerHarness],
 ] as const
 
 describe.each(adapterFactories)('%s continuity integration', (_name, createHarness) => {
@@ -230,6 +383,13 @@ function requireNativeCandidate(surface: HarnessNativeSurface): HarnessVideo {
 function requireArtCandidate(candidate: HarnessPlayer | null): HarnessPlayer {
   if (candidate === null) {
     throw new Error('ArtPlayer candidate was not created.')
+  }
+  return candidate
+}
+
+function requireCandidate<Candidate>(candidate: Candidate | null): Candidate {
+  if (candidate === null) {
+    throw new Error('Adapter candidate was not created.')
   }
   return candidate
 }

@@ -53,6 +53,21 @@ const targets = [
     path: './dist/adapters/artplayer.js',
     maxGzipBytes: 4 * 1024,
   },
+  {
+    label: './dplayer',
+    path: './dist/adapters/dplayer.js',
+    maxGzipBytes: 4 * 1024,
+  },
+  {
+    label: './videojs',
+    path: './dist/adapters/videojs.js',
+    maxGzipBytes: 4 * 1024,
+  },
+  {
+    label: './xgplayer',
+    path: './dist/adapters/xgplayer.js',
+    maxGzipBytes: 4 * 1024,
+  },
 ]
 
 const browserTargets = ['chrome111', 'safari16.4', 'firefox128']
