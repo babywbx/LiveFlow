@@ -29,6 +29,9 @@ export type ContinuityMachineEvent = {
     readonly type: 'source-failed';
     readonly generation: number;
 } | {
+    readonly type: 'playback-suspended';
+    readonly generation: number;
+} | {
     readonly type: 'destroyed';
 };
 export declare const INITIAL_CONTINUITY_STATE: ContinuityMachineState;

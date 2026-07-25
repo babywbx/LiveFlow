@@ -39,6 +39,25 @@
 | `OverlaySchedulingError`           | `overlay-scheduling-failed`     |
 | `OverlayCleanupError`              | `overlay-cleanup-failed`        |
 
+## 多路宫格
+
+| 类型                          | `code`                     |
+| ----------------------------- | -------------------------- |
+| `InvalidMultiviewLayoutError` | `invalid-multiview-layout` |
+
+瓦片数超过 `maxTiles` 时抛出共享的 `CapacityExceededError`（`capacity-exceeded`），资源名为
+`multiview-tiles`。详见[多路宫格布局](./multiview.md)。
+
+## 播放器控件显隐
+
+| 类型                                        | `code`                                    |
+| ------------------------------------------- | ----------------------------------------- |
+| `InvalidChromeVisibilityConfigurationError` | `invalid-chrome-visibility-configuration` |
+| `ChromeVisibilityPinUnderflowError`         | `chrome-visibility-pin-underflow`         |
+| `ChromeVisibilityDestroyedError`            | `chrome-visibility-destroyed`             |
+
+listener 数量和 `pin` 深度达到上限时抛出共享的 `CapacityExceededError`。
+
 ## 播放器 adapter
 
 `PlayerAdapterError` 用稳定操作码区分失败：
@@ -56,3 +75,12 @@
 
 建议按 `instanceof LiveFlowError` 识别错误族，按 `code` 聚合；不要依赖英文
 `message` 文案。
+
+## 脱敏的失败原因
+
+`SourceTransitionError.reason` 只携带上游错误的类名（如 `AbortError`、`NotAllowedError`、
+`NotSupportedError`），由 `sanitizeErrorName()` 产出：非 `Error`、或类名不匹配
+`/^[A-Za-z]{1,64}$/` 时一律记为 `unknown`。
+
+上游 `message` 永远不会传播，`cause` 也不会挂载 —— 播放器与传输层的错误信息经常内嵌
+完整签名媒体 URL。调用方需要区分失败类型时读 `reason`，不要试图解析 `message`。

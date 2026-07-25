@@ -40,14 +40,22 @@ export class InvalidPlaybackMetricsError extends LiveFlowError {
         this.field = field;
     }
 }
+export function sanitizeErrorName(error) {
+    if (!(error instanceof Error)) {
+        return 'unknown';
+    }
+    return /^[A-Za-z]{1,64}$/.test(error.name) ? error.name : 'unknown';
+}
 export class SourceTransitionError extends LiveFlowError {
     phase;
     generation;
-    constructor(phase, generation) {
+    reason;
+    constructor(phase, generation, reason = 'unknown') {
         super(`source-${phase}-failed`, `Could not ${phase} media generation ${String(generation)}.`);
         this.name = 'SourceTransitionError';
         this.phase = phase;
         this.generation = generation;
+        this.reason = reason;
     }
 }
 export class PreparedSourceGenerationMismatchError extends LiveFlowError {

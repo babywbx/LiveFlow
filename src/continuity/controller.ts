@@ -8,6 +8,7 @@ import {
   InvalidPlaybackMetricsError,
   LiveFlowError,
   PreparedSourceGenerationMismatchError,
+  sanitizeErrorName,
   SourceTransitionError,
 } from '../shared/errors.js'
 import { validatePlaybackMetrics } from './metrics.js'
@@ -27,8 +28,11 @@ import type {
   ContinuitySnapshotListener,
   LivePlayerAdapter,
   LiveSource,
+  PageActivitySource,
   PlaybackEvent,
   PlaybackMetrics,
+  PlaybackSuspension,
+  PlaybackSuspensionReason,
   PreparedSource,
 } from './types.js'
 
@@ -40,6 +44,7 @@ export interface ContinuityControllerOptions extends EngineHooks {
   readonly clock?: Clock
   readonly policy?: Partial<ContinuityPolicy>
   readonly onRecoveryRequest?: ContinuityRecoveryRequestListener
+  readonly pageActivity?: PageActivitySource
 }
 
 export function createContinuityController(
@@ -56,6 +61,7 @@ export function createContinuityController(
     resolveContinuityPolicy(options.policy),
     options.onRecoveryRequest,
     createDiagnosticEmitter(options, clock),
+    options.pageActivity,
   )
 }
 
@@ -80,6 +86,10 @@ class DefaultContinuityController implements ContinuityController {
   private hardLatencySamples = 0
   private appliedPlaybackRate = 1
   private lastPlaybackRateChangeAt: number | null = null
+  private healthySince: number | null = null
+  private suspension: PlaybackSuspension | null = null
+  private unsubscribePageActivity: (() => void) | null = null
+  private resumeFlight: Promise<void> | null = null
 
   constructor(
     private readonly adapter: LivePlayerAdapter,
@@ -87,6 +97,7 @@ class DefaultContinuityController implements ContinuityController {
     private readonly policy: ContinuityPolicy,
     private readonly onRecoveryRequest: ContinuityRecoveryRequestListener | undefined,
     private readonly diagnostics: DiagnosticEmitter,
+    private readonly pageActivity?: PageActivitySource,
   ) {
     this.unsubscribeAdapter = this.adapter.subscribe((event) => {
       this.handlePlaybackEvent(event)
@@ -115,12 +126,12 @@ class DefaultContinuityController implements ContinuityController {
     let prepared: PreparedSource
     try {
       prepared = await this.adapter.prepare(source, generation)
-    } catch {
+    } catch (error) {
       if (this.isCurrentGeneration(generation)) {
         this.cancelSourceTimeout()
       }
       this.transition({ type: 'source-failed', generation })
-      throw new SourceTransitionError('prepare', generation)
+      throw new SourceTransitionError('prepare', generation, sanitizeErrorName(error))
     }
 
     if (prepared.generation !== generation) {
@@ -142,7 +153,7 @@ class DefaultContinuityController implements ContinuityController {
 
     try {
       await this.adapter.commit(prepared, generation)
-    } catch {
+    } catch (error) {
       if (this.isCurrentGeneration(generation)) {
         this.cancelSourceTimeout()
       }
@@ -151,7 +162,7 @@ class DefaultContinuityController implements ContinuityController {
       if (failedPrepared !== null) {
         await this.discardAfterTransitionFailure(failedPrepared, generation, 'commit')
       }
-      throw new SourceTransitionError('commit', generation)
+      throw new SourceTransitionError('commit', generation, sanitizeErrorName(error))
     }
 
     if (!this.isPreparedSourceUsable(generation)) {
@@ -164,7 +175,12 @@ class DefaultContinuityController implements ContinuityController {
 
     try {
       await this.adapter.play()
-    } catch {
+    } catch (error) {
+      const reason = this.classifyPlayRejection(error)
+      if (reason !== null) {
+        this.enterSuspension(generation, reason)
+        return
+      }
       if (this.isCurrentGeneration(generation)) {
         this.cancelSourceTimeout()
       }
@@ -173,11 +189,101 @@ class DefaultContinuityController implements ContinuityController {
       if (failedPrepared !== null) {
         await this.discardAfterTransitionFailure(failedPrepared, generation, 'play')
       }
-      throw new SourceTransitionError('play', generation)
+      throw new SourceTransitionError('play', generation, sanitizeErrorName(error))
     }
 
     if (!this.isPreparedSourceUsable(generation)) {
       await this.discardTrackedPrepared(prepared, generation)
+    }
+  }
+
+  async resume(): Promise<void> {
+    this.ensureActive()
+    if (this.suspension === null) {
+      return
+    }
+    await this.retrySuspendedPlay()
+  }
+
+  private classifyPlayRejection(error: unknown): PlaybackSuspensionReason | null {
+    if (!(error instanceof Error)) {
+      return null
+    }
+    if (error.name === 'NotAllowedError') {
+      return 'autoplay-blocked'
+    }
+    // Chrome aborts muted video-only playback when the page is not visible.
+    if (error.name === 'AbortError') {
+      return 'browser-suspended'
+    }
+    return null
+  }
+
+  private enterSuspension(generation: number, reason: PlaybackSuspensionReason): void {
+    if (!this.isCurrentGeneration(generation)) {
+      return
+    }
+    this.cancelSourceTimeout()
+    this.suspension = { reason, generation }
+    this.diagnostics.emit({
+      scope: 'continuity',
+      code: 'playback-suspended',
+      level: 'warn',
+      detail: { reason, generation },
+    })
+    this.transition({ type: 'playback-suspended', generation })
+    this.watchPageActivity()
+  }
+
+  private watchPageActivity(): void {
+    if (this.pageActivity === undefined || this.unsubscribePageActivity !== null) {
+      return
+    }
+    this.unsubscribePageActivity = this.pageActivity.subscribe((hidden) => {
+      if (hidden || this.suspension === null) {
+        return
+      }
+      void this.retrySuspendedPlay()
+    })
+  }
+
+  private async retrySuspendedPlay(): Promise<void> {
+    const suspension = this.suspension
+    if (suspension === null || this.destroyPromise !== null) {
+      return
+    }
+    if (!this.isCurrentGeneration(suspension.generation)) {
+      this.clearSuspension()
+      return
+    }
+    if (this.resumeFlight !== null) {
+      await this.resumeFlight
+      return
+    }
+    const flight = this.adapter
+      .play()
+      .then(() => {
+        this.clearSuspension()
+        this.transition({ type: 'playback-resumed', generation: suspension.generation })
+      })
+      .catch(() => {
+        // Still refused: stay suspended and wait for the next visibility or resume call.
+      })
+      .finally(() => {
+        if (this.resumeFlight === flight) {
+          this.resumeFlight = null
+        }
+      })
+    this.resumeFlight = flight
+    await flight
+  }
+
+  private clearSuspension(): void {
+    this.suspension = null
+    if (this.unsubscribePageActivity !== null) {
+      const unsubscribe = this.unsubscribePageActivity
+      this.unsubscribePageActivity = null
+      unsubscribe()
     }
   }
 
@@ -186,6 +292,8 @@ class DefaultContinuityController implements ContinuityController {
       state: this.machine.state,
       generation: this.machine.generation,
       automaticRecoveryCount: this.machine.automaticRecoveryCount,
+      healthySince: this.healthySince,
+      suspension: this.suspension,
     }
   }
 
@@ -227,6 +335,9 @@ class DefaultContinuityController implements ContinuityController {
       }
     }
 
+    attempt(() => {
+      this.clearSuspension()
+    })
     attempt(() => {
       this.cancelMonitoring()
     })
@@ -375,8 +486,8 @@ class DefaultContinuityController implements ContinuityController {
   private async discardPrepared(prepared: PreparedSource, generation: number): Promise<void> {
     try {
       await this.adapter.discard(prepared)
-    } catch {
-      throw new SourceTransitionError('discard', generation)
+    } catch (error) {
+      throw new SourceTransitionError('discard', generation, sanitizeErrorName(error))
     }
 
     this.diagnostics.emit({
@@ -434,6 +545,17 @@ class DefaultContinuityController implements ContinuityController {
     this.machine = reduceContinuityState(this.machine, event)
     if (this.machine === previous) {
       return
+    }
+
+    if (this.machine.state === 'playing') {
+      if (previous.state !== 'playing') {
+        this.healthySince = this.clock.now()
+      }
+    } else {
+      this.healthySince = null
+    }
+    if (this.machine.state !== 'suspended' && this.suspension !== null) {
+      this.clearSuspension()
     }
 
     const snapshot = this.getSnapshot()

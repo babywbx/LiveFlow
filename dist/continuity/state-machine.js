@@ -39,7 +39,8 @@ export function reduceContinuityState(current, event) {
             if (current.state !== 'warming' &&
                 current.state !== 'degraded' &&
                 current.state !== 'recovering' &&
-                current.state !== 'waiting-reopen') {
+                current.state !== 'waiting-reopen' &&
+                current.state !== 'suspended') {
                 return current;
             }
             return {
@@ -61,7 +62,8 @@ export function reduceContinuityState(current, event) {
         case 'playback-resumed':
             if (current.state !== 'degraded' &&
                 current.state !== 'recovering' &&
-                current.state !== 'waiting-reopen') {
+                current.state !== 'waiting-reopen' &&
+                current.state !== 'suspended') {
                 return current;
             }
             return {
@@ -92,6 +94,16 @@ export function reduceContinuityState(current, event) {
             return {
                 ...current,
                 state: 'recovering',
+            };
+        case 'playback-suspended':
+            if (current.state !== 'warming' &&
+                current.state !== 'playing' &&
+                current.state !== 'degraded') {
+                return current;
+            }
+            return {
+                ...current,
+                state: 'suspended',
             };
     }
 }

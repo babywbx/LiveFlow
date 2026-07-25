@@ -15,6 +15,7 @@ export type ContinuityMachineEvent =
   | { readonly type: 'recovery-requested'; readonly generation: number }
   | { readonly type: 'recovery-exhausted'; readonly generation: number }
   | { readonly type: 'source-failed'; readonly generation: number }
+  | { readonly type: 'playback-suspended'; readonly generation: number }
   | { readonly type: 'destroyed' }
 
 export const INITIAL_CONTINUITY_STATE: ContinuityMachineState = {
@@ -68,7 +69,8 @@ export function reduceContinuityState(
         current.state !== 'warming' &&
         current.state !== 'degraded' &&
         current.state !== 'recovering' &&
-        current.state !== 'waiting-reopen'
+        current.state !== 'waiting-reopen' &&
+        current.state !== 'suspended'
       ) {
         return current
       }
@@ -94,7 +96,8 @@ export function reduceContinuityState(
       if (
         current.state !== 'degraded' &&
         current.state !== 'recovering' &&
-        current.state !== 'waiting-reopen'
+        current.state !== 'waiting-reopen' &&
+        current.state !== 'suspended'
       ) {
         return current
       }
@@ -126,6 +129,18 @@ export function reduceContinuityState(
       return {
         ...current,
         state: 'recovering',
+      }
+    case 'playback-suspended':
+      if (
+        current.state !== 'warming' &&
+        current.state !== 'playing' &&
+        current.state !== 'degraded'
+      ) {
+        return current
+      }
+      return {
+        ...current,
+        state: 'suspended',
       }
   }
 }

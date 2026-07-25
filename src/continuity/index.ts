@@ -11,8 +11,11 @@ export type {
   ContinuityState,
   LivePlayerAdapter,
   LiveSource,
+  PageActivitySource,
   PlaybackEvent,
   PlaybackEventListener,
   PlaybackMetrics,
+  PlaybackSuspension,
+  PlaybackSuspensionReason,
   PreparedSource,
 } from './types.js'

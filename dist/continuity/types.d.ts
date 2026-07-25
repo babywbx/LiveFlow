@@ -1,4 +1,13 @@
-export type ContinuityState = 'idle' | 'resolving' | 'warming' | 'playing' | 'degraded' | 'recovering' | 'waiting-reopen' | 'stopped';
+export type ContinuityState = 'idle' | 'resolving' | 'warming' | 'playing' | 'degraded' | 'recovering' | 'waiting-reopen' | 'suspended' | 'stopped';
+export type PlaybackSuspensionReason = 'browser-suspended' | 'autoplay-blocked';
+export interface PlaybackSuspension {
+    readonly reason: PlaybackSuspensionReason;
+    readonly generation: number;
+}
+export interface PageActivitySource {
+    isHidden(): boolean;
+    subscribe(listener: (hidden: boolean) => void): () => void;
+}
 export interface LiveSource {
     readonly url: string;
     readonly kind: string;
@@ -67,6 +76,8 @@ export interface ContinuitySnapshot {
     readonly state: ContinuityState;
     readonly generation: number;
     readonly automaticRecoveryCount: number;
+    readonly healthySince: number | null;
+    readonly suspension: PlaybackSuspension | null;
 }
 export type ContinuitySnapshotListener = (snapshot: ContinuitySnapshot) => void;
 export type ContinuityRecoveryReason = 'stall' | 'latency' | 'playback-error' | 'source-timeout';
@@ -78,6 +89,7 @@ export interface ContinuityRecoveryRequest {
 export type ContinuityRecoveryRequestListener = (request: ContinuityRecoveryRequest) => void;
 export interface ContinuityController {
     setSource(source: LiveSource): Promise<void>;
+    resume(): Promise<void>;
     getSnapshot(): ContinuitySnapshot;
     subscribe(listener: ContinuitySnapshotListener): () => void;
     destroy(): Promise<void>;

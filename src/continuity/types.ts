@@ -6,7 +6,20 @@ export type ContinuityState =
   | 'degraded'
   | 'recovering'
   | 'waiting-reopen'
+  | 'suspended'
   | 'stopped'
+
+export type PlaybackSuspensionReason = 'browser-suspended' | 'autoplay-blocked'
+
+export interface PlaybackSuspension {
+  readonly reason: PlaybackSuspensionReason
+  readonly generation: number
+}
+
+export interface PageActivitySource {
+  isHidden(): boolean
+  subscribe(listener: (hidden: boolean) => void): () => void
+}
 
 export interface LiveSource {
   readonly url: string
@@ -67,6 +80,9 @@ export interface ContinuitySnapshot {
   readonly state: ContinuityState
   readonly generation: number
   readonly automaticRecoveryCount: number
+  // Clock timestamp the current healthy streak began; null while not healthy.
+  readonly healthySince: number | null
+  readonly suspension: PlaybackSuspension | null
 }
 
 export type ContinuitySnapshotListener = (snapshot: ContinuitySnapshot) => void
@@ -83,6 +99,7 @@ export type ContinuityRecoveryRequestListener = (request: ContinuityRecoveryRequ
 
 export interface ContinuityController {
   setSource(source: LiveSource): Promise<void>
+  resume(): Promise<void>
   getSnapshot(): ContinuitySnapshot
   subscribe(listener: ContinuitySnapshotListener): () => void
   destroy(): Promise<void>

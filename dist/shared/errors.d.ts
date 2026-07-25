@@ -20,10 +20,12 @@ export declare class InvalidPlaybackMetricsError extends LiveFlowError {
     constructor(field: string);
 }
 export type SourceTransitionPhase = 'prepare' | 'commit' | 'discard' | 'play';
+export declare function sanitizeErrorName(error: unknown): string;
 export declare class SourceTransitionError extends LiveFlowError {
     readonly phase: SourceTransitionPhase;
     readonly generation: number;
-    constructor(phase: SourceTransitionPhase, generation: number);
+    readonly reason: string;
+    constructor(phase: SourceTransitionPhase, generation: number, reason?: string);
 }
 export declare class PreparedSourceGenerationMismatchError extends LiveFlowError {
     readonly expected: number;

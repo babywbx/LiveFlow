@@ -55,15 +55,25 @@ export class InvalidPlaybackMetricsError extends LiveFlowError {
 
 export type SourceTransitionPhase = 'prepare' | 'commit' | 'discard' | 'play'
 
+// Upstream messages can embed signed media URLs, so only the class name travels.
+export function sanitizeErrorName(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return 'unknown'
+  }
+  return /^[A-Za-z]{1,64}$/.test(error.name) ? error.name : 'unknown'
+}
+
 export class SourceTransitionError extends LiveFlowError {
   readonly phase: SourceTransitionPhase
   readonly generation: number
+  readonly reason: string
 
-  constructor(phase: SourceTransitionPhase, generation: number) {
+  constructor(phase: SourceTransitionPhase, generation: number, reason = 'unknown') {
     super(`source-${phase}-failed`, `Could not ${phase} media generation ${String(generation)}.`)
     this.name = 'SourceTransitionError'
     this.phase = phase
     this.generation = generation
+    this.reason = reason
   }
 }
 

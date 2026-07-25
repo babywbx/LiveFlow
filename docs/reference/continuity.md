@@ -74,10 +74,35 @@ interface ContinuitySnapshot {
   readonly state: ContinuityState
   readonly generation: number
   readonly automaticRecoveryCount: number
+  readonly healthySince: number | null
+  readonly suspension: PlaybackSuspension | null
 }
 ```
 
 快照不包含媒体 URL，避免诊断或 UI 状态意外泄露签名参数。
+
+`healthySince` 是当前健康连播开始时的时钟读数，离开 `playing` 立即回到 `null`。调用方
+用它判断「播放真的健康了」，而不是把「地址取到了」当成成功 —— 后者会让重试退避永远
+停留在第一档，形成固定间隔的重取风暴。
+
+`suspension` 非空表示**浏览器主动拒绝了播放**，媒体本身已经就绪：
+
+```ts
+type PlaybackSuspensionReason = 'browser-suspended' | 'autoplay-blocked'
+```
+
+- `browser-suspended`：`play()` 抛 `AbortError`。Chrome 会在页面不可见时暂停静音的纯视频
+  播放以省电，这不是流故障，重连没有意义。
+- `autoplay-blocked`：`play()` 抛 `NotAllowedError`，需要一次用户手势。
+
+两种情况都进入 `suspended` 状态，`setSource()` **正常 resolve**，已 commit 的候选源不会
+被丢弃。传入 `pageActivity` 时页面重新可见会自动续播；否则调用方在用户手势里调用
+`resume()`。
+
+### `resume()`
+
+在 `suspended` 状态下重试 `play()`。不处于挂起状态时是空操作。仍被拒绝则保持挂起，
+等待下一次可见性变化或 `resume()`。
 
 ### `subscribe(listener)`
 
@@ -101,6 +126,7 @@ Promise。清理步骤会尽最大努力全部执行；任一步失败时，完�
 | `degraded`       | 检测到 waiting、stall、错误或持续高尾距         |
 | `recovering`     | 已发出一次有界恢复请求                          |
 | `waiting-reopen` | 自动恢复耗尽、不可恢复，或没有可用恢复 listener |
+| `suspended`      | 浏览器拒绝播放（省电暂停或自动播放策略）        |
 | `stopped`        | 控制器已销毁                                    |
 
 `ERROR` 不等于平台离线。连续性状态不解释主播是否开播，也不会修改调用方的平台状态。
@@ -210,8 +236,13 @@ interface ContinuityRecoveryRequest {
 | `LiveFlowError` / `playback-rate-update-failed` | adapter 拒绝播放速度更新                      |
 | `LiveFlowError` / `controller-cleanup-failed`   | 销毁期间有 adapter 清理失败                   |
 
-`SourceTransitionError` 只暴露 phase 和 generation，不保留上游 `cause`，也不包含
-`LiveSource.url`。
+`SourceTransitionError` 暴露 phase、generation 和脱敏后的 `reason`，不保留上游 `cause`，
+也不包含 `LiveSource.url`。`reason` 只取上游错误的类名（如 `NotSupportedError`），且必须
+匹配 `/^[A-Za-z]{1,64}$/`，否则记为 `unknown` —— 上游 `message` 可能内嵌签名 URL，永远
+不会传播。
+
+被判定为挂起的 `AbortError` 与 `NotAllowedError` 不再抛 `SourceTransitionError`，改为进入
+`suspended` 状态。
 
 ## 诊断
 
