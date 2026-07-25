@@ -410,4 +410,67 @@ describe('native video adapter', () => {
     expect(initial.src).toBe('')
     expect(initial.pauseCalls).toBe(1)
   })
+
+  it('activates prepared sources through the custom binding instead of the src attribute', async () => {
+    const initial = new SyntheticVideo()
+    const surface = new SyntheticSurface(initial)
+    const attached: Array<{ video: VideoElementLike; url: string }> = []
+    const detached: VideoElementLike[] = []
+    const adapter = createNativeVideoAdapter({
+      video: initial,
+      surface,
+      crossOrigin: 'anonymous',
+      binding: {
+        attach(video, source): void {
+          attached.push({ video, url: source.url })
+        },
+        detach(video): void {
+          detached.push(video)
+        },
+      },
+    })
+
+    const prepared = await adapter.prepare(
+      { url: 'https://media.invalid/live-8.flv', kind: 'flv' },
+      8,
+    )
+    const candidate = surface.latestCreated()
+    expect(attached).toEqual([{ video: candidate, url: 'https://media.invalid/live-8.flv' }])
+    expect(candidate.src).toBe('')
+    expect(candidate.loadCalls).toBe(0)
+    expect(candidate.crossOrigin).toBe('anonymous')
+
+    await adapter.discard(prepared)
+    expect(detached).toEqual([candidate])
+    expect(candidate.pauseCalls).toBe(1)
+    expect(surface.mounted.has(candidate)).toBe(false)
+
+    await adapter.destroy()
+    expect(detached).toContain(initial)
+  })
+
+  it('still releases the video when binding detach fails', async () => {
+    const initial = new SyntheticVideo()
+    const surface = new SyntheticSurface(initial)
+    const adapter = createNativeVideoAdapter({
+      video: initial,
+      surface,
+      binding: {
+        attach(): void {},
+        detach(): void {
+          throw new Error('Synthetic detach failure.')
+        },
+      },
+    })
+
+    const prepared = await adapter.prepare(
+      { url: 'https://media.invalid/live-9.flv', kind: 'flv' },
+      9,
+    )
+    const candidate = surface.latestCreated()
+
+    expect(() => adapter.discard(prepared)).toThrowError(PlayerAdapterError)
+    expect(candidate.pauseCalls).toBe(1)
+    expect(candidate.src).toBe('')
+  })
 })

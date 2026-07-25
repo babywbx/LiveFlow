@@ -35,10 +35,14 @@ export function createNativeVideoAdapter(options) {
             });
         },
         activate(resource, source) {
-            resource.video.preload = 'auto';
             if (options.crossOrigin !== undefined) {
                 resource.video.crossOrigin = options.crossOrigin;
             }
+            if (options.binding !== undefined) {
+                options.binding.attach(resource.video, source);
+                return;
+            }
+            resource.video.preload = 'auto';
             resource.video.src = source.url;
             resource.video.load();
         },
@@ -54,6 +58,14 @@ export function createNativeVideoAdapter(options) {
         },
         release(resource) {
             let cleanupFailed = false;
+            if (options.binding !== undefined) {
+                try {
+                    options.binding.detach(resource.video);
+                }
+                catch {
+                    cleanupFailed = true;
+                }
+            }
             try {
                 cleanupVideo(resource.video);
             }

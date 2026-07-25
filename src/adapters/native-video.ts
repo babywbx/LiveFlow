@@ -11,8 +11,15 @@ import {
 export interface NativeVideoAdapterOptions extends EngineHooks {
   readonly video: VideoElementLike
   readonly surface?: NativeVideoSurface
+  readonly binding?: NativeVideoSourceBinding
   readonly crossOrigin?: 'anonymous' | 'use-credentials'
   readonly now?: () => number
+}
+
+export interface NativeVideoSourceBinding {
+  attach(video: VideoElementLike, source: LiveSource): void
+  // Must be idempotent: called for videos that never attached.
+  detach(video: VideoElementLike): void
 }
 
 export interface NativeVideoSurface {
@@ -64,10 +71,14 @@ export function createNativeVideoAdapter(options: NativeVideoAdapterOptions): Li
       })
     },
     activate(resource: NativeResource, source: LiveSource): void {
-      resource.video.preload = 'auto'
       if (options.crossOrigin !== undefined) {
         resource.video.crossOrigin = options.crossOrigin
       }
+      if (options.binding !== undefined) {
+        options.binding.attach(resource.video, source)
+        return
+      }
+      resource.video.preload = 'auto'
       resource.video.src = source.url
       resource.video.load()
     },
@@ -83,6 +94,13 @@ export function createNativeVideoAdapter(options: NativeVideoAdapterOptions): Li
     },
     release(resource: NativeResource): void {
       let cleanupFailed = false
+      if (options.binding !== undefined) {
+        try {
+          options.binding.detach(resource.video)
+        } catch {
+          cleanupFailed = true
+        }
+      }
       try {
         cleanupVideo(resource.video)
       } catch {

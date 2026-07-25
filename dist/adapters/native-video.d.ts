@@ -1,11 +1,16 @@
 import type { EngineHooks } from '../shared/diagnostics.js';
-import type { LivePlayerAdapter } from '../continuity/types.js';
+import type { LivePlayerAdapter, LiveSource } from '../continuity/types.js';
 import { type VideoElementLike } from './media-session-adapter.js';
 export interface NativeVideoAdapterOptions extends EngineHooks {
     readonly video: VideoElementLike;
     readonly surface?: NativeVideoSurface;
+    readonly binding?: NativeVideoSourceBinding;
     readonly crossOrigin?: 'anonymous' | 'use-credentials';
     readonly now?: () => number;
+}
+export interface NativeVideoSourceBinding {
+    attach(video: VideoElementLike, source: LiveSource): void;
+    detach(video: VideoElementLike): void;
 }
 export interface NativeVideoSurface {
     createVideo(): VideoElementLike;
