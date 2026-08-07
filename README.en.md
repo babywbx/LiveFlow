@@ -295,6 +295,8 @@ import { createContinuityController } from '@babywbx/liveflow/continuity'
 
 interface ContinuityController {
   setSource(source: LiveSource): Promise<void>
+  resume(): Promise<void>
+  cancelRecovery(generation: number): void
   getSnapshot(): ContinuitySnapshot
   subscribe(listener: ContinuitySnapshotListener): () => void
   destroy(): Promise<void>
@@ -404,7 +406,7 @@ interface DanmakuEngine {
   getMetrics(): DanmakuMetrics
   pause(): void
   resume(): void
-  resize(viewport: DanmakuViewport): void
+  resize(viewport: DanmakuViewport, policy?: Partial<DanmakuPolicy>): void
   destroy(): void
 }
 ```
