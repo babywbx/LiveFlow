@@ -1015,10 +1015,16 @@ class DefaultContinuityController implements ContinuityController {
 
     this.sourceTimeoutTimer = this.clock.setTimeout(() => {
       this.sourceTimeoutTimer = null
-      if (
-        !this.isCurrentGeneration(generation) ||
-        (this.machine.state !== 'resolving' && this.machine.state !== 'warming')
-      ) {
+      if (!this.isCurrentGeneration(generation)) {
+        return
+      }
+
+      // The candidate may have failed loudly first; release it whatever the state now is.
+      const timedOutPrepared = this.takeWarmingPrepared(generation)
+      if (timedOutPrepared !== null) {
+        void this.discardAfterTransitionFailure(timedOutPrepared, generation, 'source-timeout')
+      }
+      if (this.machine.state !== 'resolving' && this.machine.state !== 'warming') {
         return
       }
 
@@ -1026,10 +1032,6 @@ class DefaultContinuityController implements ContinuityController {
         type: 'playback-degraded',
         generation,
       })
-      const timedOutPrepared = this.takeWarmingPrepared(generation)
-      if (timedOutPrepared !== null) {
-        void this.discardAfterTransitionFailure(timedOutPrepared, generation, 'source-timeout')
-      }
       this.requestRecovery('source-timeout')
     }, this.policy.sourceWarmupTimeoutMs)
   }

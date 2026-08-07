@@ -80,4 +80,31 @@ describe('continuity broken timeline', () => {
 
     await controller.destroy()
   })
+
+  it('releases a warming source that failed before the warmup timeout', async () => {
+    const adapter = new FakePlayerAdapter()
+    const clock = new FakeClock()
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      policy: { sourceWarmupTimeoutMs: 8_000 },
+      onRecoveryRequest: () => {},
+    })
+
+    await controller.setSource(SOURCE)
+    adapter.emit({ type: 'first-frame', generation: 1 })
+    await controller.setSource(SOURCE)
+
+    adapter.emit({ type: 'error', generation: 2, code: 'network', recoverable: true })
+    expect(controller.getSnapshot().state).toBe('degraded')
+    expect(adapter.wasDiscarded(2)).toBe(false)
+
+    clock.advanceBy(8_000)
+
+    expect(adapter.wasDiscarded(2)).toBe(true)
+    expect(adapter.hasLiveResource(2)).toBe(false)
+
+    await controller.destroy()
+  })
 })

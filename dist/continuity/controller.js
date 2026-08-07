@@ -854,18 +854,20 @@ class DefaultContinuityController {
         }
         this.sourceTimeoutTimer = this.clock.setTimeout(() => {
             this.sourceTimeoutTimer = null;
-            if (!this.isCurrentGeneration(generation) ||
-                (this.machine.state !== 'resolving' && this.machine.state !== 'warming')) {
+            if (!this.isCurrentGeneration(generation)) {
+                return;
+            }
+            const timedOutPrepared = this.takeWarmingPrepared(generation);
+            if (timedOutPrepared !== null) {
+                void this.discardAfterTransitionFailure(timedOutPrepared, generation, 'source-timeout');
+            }
+            if (this.machine.state !== 'resolving' && this.machine.state !== 'warming') {
                 return;
             }
             this.transition({
                 type: 'playback-degraded',
                 generation,
             });
-            const timedOutPrepared = this.takeWarmingPrepared(generation);
-            if (timedOutPrepared !== null) {
-                void this.discardAfterTransitionFailure(timedOutPrepared, generation, 'source-timeout');
-            }
             this.requestRecovery('source-timeout');
         }, this.policy.sourceWarmupTimeoutMs);
     }
