@@ -3,6 +3,7 @@ export const DEFAULT_CONTINUITY_POLICY = {
     targetLatencySeconds: 2,
     softCatchupThresholdSeconds: 0.6,
     hardResyncThresholdSeconds: 8,
+    maxPlausibleLiveEdgeSeconds: 3_600,
     catchupRate: 1.04,
     recoveryCooldownMs: 30_000,
     sourceWarmupTimeoutMs: 8_000,
@@ -18,6 +19,8 @@ export function resolveContinuityPolicy(overrides) {
         softCatchupThresholdSeconds: overrides?.softCatchupThresholdSeconds ??
             DEFAULT_CONTINUITY_POLICY.softCatchupThresholdSeconds,
         hardResyncThresholdSeconds: overrides?.hardResyncThresholdSeconds ?? DEFAULT_CONTINUITY_POLICY.hardResyncThresholdSeconds,
+        maxPlausibleLiveEdgeSeconds: overrides?.maxPlausibleLiveEdgeSeconds ??
+            DEFAULT_CONTINUITY_POLICY.maxPlausibleLiveEdgeSeconds,
         catchupRate: overrides?.catchupRate ?? DEFAULT_CONTINUITY_POLICY.catchupRate,
         recoveryCooldownMs: overrides?.recoveryCooldownMs ?? DEFAULT_CONTINUITY_POLICY.recoveryCooldownMs,
         sourceWarmupTimeoutMs: overrides?.sourceWarmupTimeoutMs ?? DEFAULT_CONTINUITY_POLICY.sourceWarmupTimeoutMs,
@@ -55,6 +58,10 @@ function validateContinuityPolicy(policy) {
     if (policy.hardResyncThresholdSeconds <=
         policy.targetLatencySeconds + policy.softCatchupThresholdSeconds) {
         throw new InvalidContinuityPolicyError('hardResyncThresholdSeconds');
+    }
+    if (!Number.isFinite(policy.maxPlausibleLiveEdgeSeconds) ||
+        policy.maxPlausibleLiveEdgeSeconds <= policy.hardResyncThresholdSeconds) {
+        throw new InvalidContinuityPolicyError('maxPlausibleLiveEdgeSeconds');
     }
 }
 function requireFinitePositive(field, value) {

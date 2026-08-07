@@ -692,6 +692,19 @@ class DefaultContinuityController implements ContinuityController {
       return
     }
 
+    if (metrics.liveEdgeDistanceSeconds > this.policy.maxPlausibleLiveEdgeSeconds) {
+      // A broken timeline, not latency: catching up, seeking and reopening all fail to help.
+      this.hardLatencySamples = 0
+      this.applyPlaybackRateSafely(1, false)
+      this.diagnostics.emit({
+        scope: 'continuity',
+        code: 'implausible-live-edge',
+        level: 'warn',
+        generation: this.machine.generation,
+      })
+      return
+    }
+
     if (metrics.liveEdgeDistanceSeconds >= this.policy.hardResyncThresholdSeconds) {
       this.hardLatencySamples = Math.min(
         this.hardLatencySamples + 1,

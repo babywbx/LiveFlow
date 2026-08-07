@@ -5,6 +5,7 @@ export const DEFAULT_CONTINUITY_POLICY: Readonly<ContinuityPolicy> = {
   targetLatencySeconds: 2,
   softCatchupThresholdSeconds: 0.6,
   hardResyncThresholdSeconds: 8,
+  maxPlausibleLiveEdgeSeconds: 3_600,
   catchupRate: 1.04,
   recoveryCooldownMs: 30_000,
   sourceWarmupTimeoutMs: 8_000,
@@ -26,6 +27,9 @@ export function resolveContinuityPolicy(
       DEFAULT_CONTINUITY_POLICY.softCatchupThresholdSeconds,
     hardResyncThresholdSeconds:
       overrides?.hardResyncThresholdSeconds ?? DEFAULT_CONTINUITY_POLICY.hardResyncThresholdSeconds,
+    maxPlausibleLiveEdgeSeconds:
+      overrides?.maxPlausibleLiveEdgeSeconds ??
+      DEFAULT_CONTINUITY_POLICY.maxPlausibleLiveEdgeSeconds,
     catchupRate: overrides?.catchupRate ?? DEFAULT_CONTINUITY_POLICY.catchupRate,
     recoveryCooldownMs:
       overrides?.recoveryCooldownMs ?? DEFAULT_CONTINUITY_POLICY.recoveryCooldownMs,
@@ -77,6 +81,12 @@ function validateContinuityPolicy(policy: ContinuityPolicy): void {
     policy.targetLatencySeconds + policy.softCatchupThresholdSeconds
   ) {
     throw new InvalidContinuityPolicyError('hardResyncThresholdSeconds')
+  }
+  if (
+    !Number.isFinite(policy.maxPlausibleLiveEdgeSeconds) ||
+    policy.maxPlausibleLiveEdgeSeconds <= policy.hardResyncThresholdSeconds
+  ) {
+    throw new InvalidContinuityPolicyError('maxPlausibleLiveEdgeSeconds')
   }
 }
 

@@ -68,6 +68,7 @@ export interface ContinuityPolicy {
     targetLatencySeconds: number;
     softCatchupThresholdSeconds: number;
     hardResyncThresholdSeconds: number;
+    maxPlausibleLiveEdgeSeconds: number;
     catchupRate: number;
     recoveryCooldownMs: number;
     sourceWarmupTimeoutMs: number;

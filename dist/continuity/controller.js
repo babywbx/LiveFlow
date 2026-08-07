@@ -565,6 +565,17 @@ class DefaultContinuityController {
             this.scheduleRecovery('stall', 0);
             return;
         }
+        if (metrics.liveEdgeDistanceSeconds > this.policy.maxPlausibleLiveEdgeSeconds) {
+            this.hardLatencySamples = 0;
+            this.applyPlaybackRateSafely(1, false);
+            this.diagnostics.emit({
+                scope: 'continuity',
+                code: 'implausible-live-edge',
+                level: 'warn',
+                generation: this.machine.generation,
+            });
+            return;
+        }
         if (metrics.liveEdgeDistanceSeconds >= this.policy.hardResyncThresholdSeconds) {
             this.hardLatencySamples = Math.min(this.hardLatencySamples + 1, DefaultContinuityController.HARD_LATENCY_CONFIRMATION_SAMPLES);
             if (this.hardLatencySamples < DefaultContinuityController.HARD_LATENCY_CONFIRMATION_SAMPLES) {

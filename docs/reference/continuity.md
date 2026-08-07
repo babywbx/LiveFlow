@@ -210,6 +210,7 @@ interface PlaybackMetrics {
 | `targetLatencySeconds`        |     `2` |
 | `softCatchupThresholdSeconds` |   `0.6` |
 | `hardResyncThresholdSeconds`  |     `8` |
+| `maxPlausibleLiveEdgeSeconds` |  `3600` |
 | `catchupRate`                 |  `1.04` |
 | `recoveryCooldownMs`          | `30000` |
 | `sourceWarmupTimeoutMs`       |  `8000` |
@@ -222,6 +223,13 @@ interface PlaybackMetrics {
 非法数值或互相矛盾的阈值会在创建时抛出
 `InvalidContinuityPolicyError`。`reopenGraceMs` 已进入契约，但当前连续性 MVP 不负责把
 平台状态判定为离线；调用方仍拥有最终离线展示时机。
+
+`maxPlausibleLiveEdgeSeconds` 是尾距的可信上界，必须大于 `hardResyncThresholdSeconds`。
+超过它的尾距不会被当成「落后太多」：容器时间戳回绕（32 位毫秒回绕后缓冲末端会跳到约
+四百万秒之后）等异常会让尾距变成物理上不可能的数字，而追帧、seek 和换源对这类时间轴
+损坏全部无效，照常处理只会把恢复预算和 seek 次数白白烧光。控制器改为把速率归一、发出
+`implausible-live-edge` 诊断并保持当前源继续播放 —— 画面本身通常是好的。真正的故障仍由
+卡顿、错误和结束事件各自的路径处理。
 
 ## 卡顿先解救，再换源
 
@@ -291,6 +299,7 @@ interface ContinuityRecoveryRequest {
 - `prepared-source-cleanup-failed`
 - `stall-detected`
 - `stall-seek`
+- `implausible-live-edge`
 - `catchup-started`
 - `catchup-stopped`
 - `metrics-sample-failed`
