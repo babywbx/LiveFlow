@@ -66,7 +66,7 @@ export function createDanmakuEngine(options: DanmakuEngineOptions): DanmakuEngin
   }
   validateViewport(options.viewport)
   const limits = resolveLimits(options.limits)
-  const policy = resolvePolicy(options.policy)
+  let policy = resolvePolicy(options.policy)
   const clock = options.clock ?? createSystemClock()
   const renderer = options.renderer
   let viewport: DanmakuViewport = { ...options.viewport }
@@ -187,9 +187,12 @@ export function createDanmakuEngine(options: DanmakuEngineOptions): DanmakuEngin
       })
       scheduleFrame()
     },
-    resize(nextViewport: DanmakuViewport): void {
+    resize(nextViewport: DanmakuViewport, nextPolicy?: Partial<DanmakuPolicy>): void {
       ensureActive()
       validateViewport(nextViewport)
+      if (nextPolicy !== undefined) {
+        policy = resolvePolicy({ ...policy, ...nextPolicy })
+      }
       const now = readNow()
       viewport = { ...nextViewport }
       laneCount = calculateLaneCount(viewport, policy)

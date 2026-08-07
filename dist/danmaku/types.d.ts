@@ -120,6 +120,6 @@ export interface DanmakuEngine {
     getMetrics(): DanmakuMetrics;
     pause(): void;
     resume(): void;
-    resize(viewport: DanmakuViewport): void;
+    resize(viewport: DanmakuViewport, policy?: Partial<DanmakuPolicy>): void;
     destroy(): void;
 }

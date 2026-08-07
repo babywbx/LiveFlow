@@ -11,7 +11,7 @@ export function createDanmakuEngine(options) {
     }
     validateViewport(options.viewport);
     const limits = resolveLimits(options.limits);
-    const policy = resolvePolicy(options.policy);
+    let policy = resolvePolicy(options.policy);
     const clock = options.clock ?? createSystemClock();
     const renderer = options.renderer;
     let viewport = { ...options.viewport };
@@ -126,9 +126,12 @@ export function createDanmakuEngine(options) {
             });
             scheduleFrame();
         },
-        resize(nextViewport) {
+        resize(nextViewport, nextPolicy) {
             ensureActive();
             validateViewport(nextViewport);
+            if (nextPolicy !== undefined) {
+                policy = resolvePolicy({ ...policy, ...nextPolicy });
+            }
             const now = readNow();
             viewport = { ...nextViewport };
             laneCount = calculateLaneCount(viewport, policy);
