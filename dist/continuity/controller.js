@@ -35,6 +35,7 @@ class DefaultContinuityController {
     pendingRecoveryReason = null;
     warmingPrepared = null;
     lastRecoveryAt = null;
+    lastRecoveryGeneration = null;
     hardLatencySamples = 0;
     stallSeeks = 0;
     appliedPlaybackRate = 1;
@@ -314,6 +315,11 @@ class DefaultContinuityController {
             this.hardLatencySamples = 0;
             this.transition({ type: 'first-frame', generation: event.generation });
             if (previousState !== this.machine.state && this.machine.state === 'playing') {
+                if (this.lastRecoveryGeneration !== null &&
+                    event.generation > this.lastRecoveryGeneration) {
+                    this.lastRecoveryAt = null;
+                    this.lastRecoveryGeneration = null;
+                }
                 this.takeWarmingPrepared(event.generation);
                 this.cancelSourceTimeout();
                 this.scheduleMonitoring();
@@ -741,6 +747,7 @@ class DefaultContinuityController {
             }
         }
         this.lastRecoveryAt = this.clock.now();
+        this.lastRecoveryGeneration = this.machine.generation;
         this.transition({
             type: 'recovery-requested',
             generation: this.machine.generation,

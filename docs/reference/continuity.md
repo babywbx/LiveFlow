@@ -236,7 +236,9 @@ interface ContinuityRecoveryRequest {
 ```
 
 恢复请求受 `recoveryCooldownMs` 和 `maxAutomaticRecoveries` 限制。短暂恢复播放不会清空
-同一 generation 的恢复次数，也不会绕过控制器级冷却。恢复 listener 调用 `setSource()`
+同一 generation 的恢复次数，也不会绕过控制器级冷却。但替换源产生首帧意味着上一次恢复
+真的成功了，此时冷却计时一并清零：**成功的恢复不该继续节流后面一次不相干的故障**。
+否则一路流在恢复后正常播放数秒、再次出问题时，会白等完整个冷却窗口才被处理。恢复 listener 调用 `setSource()`
 时，计数会跨 generation 保留，直到替换源产生首帧才清零，因此连续换源失败无法绕过
 上限。调用方通常在 listener 中重新解析签名和候选线路，再把选择结果交给
 `setSource()`。

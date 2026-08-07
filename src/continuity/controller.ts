@@ -83,6 +83,7 @@ class DefaultContinuityController implements ContinuityController {
   private pendingRecoveryReason: ContinuityRecoveryReason | null = null
   private warmingPrepared: PreparedSource | null = null
   private lastRecoveryAt: number | null = null
+  private lastRecoveryGeneration: number | null = null
   private hardLatencySamples = 0
   private stallSeeks = 0
   private appliedPlaybackRate = 1
@@ -399,6 +400,14 @@ class DefaultContinuityController implements ContinuityController {
       this.hardLatencySamples = 0
       this.transition({ type: 'first-frame', generation: event.generation })
       if (previousState !== this.machine.state && this.machine.state === 'playing') {
+        // A recovery that produced a new playing source must not throttle the next, unrelated one.
+        if (
+          this.lastRecoveryGeneration !== null &&
+          event.generation > this.lastRecoveryGeneration
+        ) {
+          this.lastRecoveryAt = null
+          this.lastRecoveryGeneration = null
+        }
         this.takeWarmingPrepared(event.generation)
         this.cancelSourceTimeout()
         this.scheduleMonitoring()
@@ -886,6 +895,7 @@ class DefaultContinuityController implements ContinuityController {
     }
 
     this.lastRecoveryAt = this.clock.now()
+    this.lastRecoveryGeneration = this.machine.generation
     this.transition({
       type: 'recovery-requested',
       generation: this.machine.generation,
