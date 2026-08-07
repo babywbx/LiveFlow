@@ -104,6 +104,19 @@ type PlaybackSuspensionReason = 'browser-suspended' | 'autoplay-blocked'
 在 `suspended` 状态下重试 `play()`。不处于挂起状态时是空操作。仍被拒绝则保持挂起，
 等待下一次可见性变化或 `resume()`。
 
+### `cancelRecovery(generation)`
+
+撤回一次恢复请求：调用方查完发现这一路不需要换源时调用它，把这次恢复占用的次数还回去，
+并清掉控制器级冷却。同时丢弃当前尚未发出的待发恢复。
+
+只在**调用方决定不响应**这次请求时调用。正常响应恢复请求的方式仍然是 `setSource()`，
+计数会在替换源产生首帧时清零，两条路径不要混用。
+
+三种情况是空操作，不抛错：generation 不是当前代际、当前没有待撤回的恢复请求、控制器
+已销毁。最后一条是刻意的：调用方常在异步查完之后才做决定，那时组件可能已经卸载。
+
+撤回不改变连续性状态。流是否恢复由播放事件决定，控制器不会因为一次撤回就假定播放正常。
+
 ### `subscribe(listener)`
 
 监听快照变化，返回退订函数。同一控制器最多保留 32 个不同 listener；达到上限会抛出
@@ -243,6 +256,11 @@ interface ContinuityRecoveryRequest {
 上限。调用方通常在 listener 中重新解析签名和候选线路，再把选择结果交给
 `setSource()`。
 
+恢复请求不强制以 `setSource()` 收尾。调用方解析新线路要花时间，等结果回来时这一路可能
+已经自己恢复了，此时换源反而是一次多余的黑屏。这种情况调用 `cancelRecovery(generation)`
+把次数还回去：**没有真正发生的恢复不应该消耗恢复预算**。否则一路反复自愈的流会在播放
+完全正常的情况下被推进 `waiting-reopen`。
+
 ## 错误
 
 | 错误                                            | 条件                                          |
@@ -272,6 +290,7 @@ interface ContinuityRecoveryRequest {
 - `prepared-source-discarded`
 - `prepared-source-cleanup-failed`
 - `stall-detected`
+- `stall-seek`
 - `catchup-started`
 - `catchup-stopped`
 - `metrics-sample-failed`
@@ -279,6 +298,7 @@ interface ContinuityRecoveryRequest {
 - `playback-rate-update-failed`
 - `nonrecoverable-playback-error`
 - `recovery-requested`
+- `recovery-cancelled`
 - `recovery-exhausted`
 - `recovery-listener-missing`
 - `recovery-listener-failed`

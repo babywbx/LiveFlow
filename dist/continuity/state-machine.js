@@ -79,6 +79,14 @@ export function reduceContinuityState(current, event) {
                 state: 'recovering',
                 automaticRecoveryCount: current.automaticRecoveryCount + 1,
             };
+        case 'recovery-cancelled':
+            if (current.automaticRecoveryCount === 0) {
+                return current;
+            }
+            return {
+                ...current,
+                automaticRecoveryCount: current.automaticRecoveryCount - 1,
+            };
         case 'recovery-exhausted':
             if (current.state !== 'degraded' && current.state !== 'recovering') {
                 return current;

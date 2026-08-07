@@ -105,6 +105,7 @@ export type ContinuityRecoveryRequestListener = (request: ContinuityRecoveryRequ
 export interface ContinuityController {
   setSource(source: LiveSource): Promise<void>
   resume(): Promise<void>
+  cancelRecovery(generation: number): void
   getSnapshot(): ContinuitySnapshot
   subscribe(listener: ContinuitySnapshotListener): () => void
   destroy(): Promise<void>

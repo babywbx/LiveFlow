@@ -49,6 +49,21 @@ onRecoveryRequest(request) {
 刷新失败必须由调用方记录并决定是否重试。不要在 listener 中建立无上限循环；控制器的恢复
 次数只约束它发出的请求，不能约束调用方自行创建的任务。
 
+解析结果回来时这一路可能已经自己恢复了。这种情况不要调用 `setSource()`，改为撤回：
+
+```ts
+void refreshSource(request).then((source) => {
+  if (controller.getSnapshot().state === 'playing') {
+    controller.cancelRecovery(request.generation)
+    return
+  }
+  void controller.setSource(source)
+})
+```
+
+撤回把这次占用的恢复次数还回去，并清掉冷却。漏掉这一步时，一路反复自愈的流会在播放
+完全正常的情况下耗尽 `maxAutomaticRecoveries` 并进入 `waiting-reopen`。
+
 ## 平台离线判断
 
 连续性状态中的 `degraded`、`recovering` 和 `waiting-reopen` 都不代表主播离线。平台状态

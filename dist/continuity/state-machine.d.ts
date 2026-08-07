@@ -23,6 +23,9 @@ export type ContinuityMachineEvent = {
     readonly type: 'recovery-requested';
     readonly generation: number;
 } | {
+    readonly type: 'recovery-cancelled';
+    readonly generation: number;
+} | {
     readonly type: 'recovery-exhausted';
     readonly generation: number;
 } | {

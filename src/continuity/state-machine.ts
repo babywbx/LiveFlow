@@ -13,6 +13,7 @@ export type ContinuityMachineEvent =
   | { readonly type: 'playback-degraded'; readonly generation: number }
   | { readonly type: 'playback-resumed'; readonly generation: number }
   | { readonly type: 'recovery-requested'; readonly generation: number }
+  | { readonly type: 'recovery-cancelled'; readonly generation: number }
   | { readonly type: 'recovery-exhausted'; readonly generation: number }
   | { readonly type: 'source-failed'; readonly generation: number }
   | { readonly type: 'playback-suspended'; readonly generation: number }
@@ -113,6 +114,14 @@ export function reduceContinuityState(
         ...current,
         state: 'recovering',
         automaticRecoveryCount: current.automaticRecoveryCount + 1,
+      }
+    case 'recovery-cancelled':
+      if (current.automaticRecoveryCount === 0) {
+        return current
+      }
+      return {
+        ...current,
+        automaticRecoveryCount: current.automaticRecoveryCount - 1,
       }
     case 'recovery-exhausted':
       if (current.state !== 'degraded' && current.state !== 'recovering') {

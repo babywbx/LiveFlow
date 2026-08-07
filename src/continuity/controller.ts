@@ -86,6 +86,7 @@ class DefaultContinuityController implements ContinuityController {
   private lastRecoveryGeneration: number | null = null
   private hardLatencySamples = 0
   private stallSeeks = 0
+  private outstandingRecoveries = 0
   private appliedPlaybackRate = 1
   private lastPlaybackRateChangeAt: number | null = null
   private healthySince: number | null = null
@@ -117,10 +118,11 @@ class DefaultContinuityController implements ContinuityController {
       )
     }
     this.cancelMonitoring()
-    this.cancelRecovery()
+    this.clearPendingRecovery()
     this.cancelSourceTimeout()
     this.hardLatencySamples = 0
     this.stallSeeks = 0
+    this.outstandingRecoveries = 0
     this.applyPlaybackRateForSourceChange()
     const generation = this.machine.generation + 1
     this.transition({ type: 'source-requested', generation })
@@ -206,6 +208,31 @@ class DefaultContinuityController implements ContinuityController {
       return
     }
     await this.retrySuspendedPlay()
+  }
+
+  cancelRecovery(generation: number): void {
+    if (!this.isCurrentGeneration(generation)) {
+      return
+    }
+
+    this.clearPendingRecovery()
+    if (this.outstandingRecoveries === 0) {
+      return
+    }
+
+    this.outstandingRecoveries -= 1
+    this.lastRecoveryAt = null
+    this.lastRecoveryGeneration = null
+    this.transition({ type: 'recovery-cancelled', generation })
+    this.diagnostics.emit({
+      scope: 'continuity',
+      code: 'recovery-cancelled',
+      level: 'info',
+      generation,
+      detail: {
+        attempts: this.machine.automaticRecoveryCount,
+      },
+    })
   }
 
   private classifyPlayRejection(error: unknown): PlaybackSuspensionReason | null {
@@ -345,7 +372,7 @@ class DefaultContinuityController implements ContinuityController {
       this.cancelMonitoring()
     })
     attempt(() => {
-      this.cancelRecovery()
+      this.clearPendingRecovery()
     })
     attempt(() => {
       this.cancelSourceTimeout()
@@ -473,7 +500,7 @@ class DefaultContinuityController implements ContinuityController {
 
     if (event.type === 'playing' && this.machine.state !== 'warming') {
       this.hardLatencySamples = 0
-      this.cancelRecovery()
+      this.clearPendingRecovery()
       this.transition({ type: 'playback-resumed', generation: event.generation })
       this.scheduleMonitoring()
     }
@@ -896,10 +923,12 @@ class DefaultContinuityController implements ContinuityController {
 
     this.lastRecoveryAt = this.clock.now()
     this.lastRecoveryGeneration = this.machine.generation
+    const countBeforeRequest = this.machine.automaticRecoveryCount
     this.transition({
       type: 'recovery-requested',
       generation: this.machine.generation,
     })
+    const counted = this.machine.automaticRecoveryCount > countBeforeRequest
     this.diagnostics.emit({
       scope: 'continuity',
       code: 'recovery-requested',
@@ -925,6 +954,11 @@ class DefaultContinuityController implements ContinuityController {
       return
     }
 
+    // Count before delivery; the listener may cancel synchronously.
+    if (counted) {
+      this.outstandingRecoveries += 1
+    }
+
     try {
       this.onRecoveryRequest({
         reason,
@@ -932,6 +966,9 @@ class DefaultContinuityController implements ContinuityController {
         attempt: this.machine.automaticRecoveryCount,
       })
     } catch {
+      if (counted) {
+        this.outstandingRecoveries = Math.max(0, this.outstandingRecoveries - 1)
+      }
       this.transition({
         type: 'recovery-exhausted',
         generation: this.machine.generation,
@@ -946,7 +983,7 @@ class DefaultContinuityController implements ContinuityController {
     }
   }
 
-  private cancelRecovery(): void {
+  private clearPendingRecovery(): void {
     if (this.recoveryTimer !== null) {
       const timer = this.recoveryTimer
       this.recoveryTimer = null
