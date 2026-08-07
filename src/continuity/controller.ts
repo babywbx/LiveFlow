@@ -84,6 +84,7 @@ class DefaultContinuityController implements ContinuityController {
   private warmingPrepared: PreparedSource | null = null
   private lastRecoveryAt: number | null = null
   private hardLatencySamples = 0
+  private stallSeeks = 0
   private appliedPlaybackRate = 1
   private lastPlaybackRateChangeAt: number | null = null
   private healthySince: number | null = null
@@ -118,6 +119,7 @@ class DefaultContinuityController implements ContinuityController {
     this.cancelRecovery()
     this.cancelSourceTimeout()
     this.hardLatencySamples = 0
+    this.stallSeeks = 0
     this.applyPlaybackRateForSourceChange()
     const generation = this.machine.generation + 1
     this.transition({ type: 'source-requested', generation })
@@ -633,6 +635,10 @@ class DefaultContinuityController implements ContinuityController {
       metrics.stalledSince !== null &&
       this.clock.now() - metrics.stalledSince >= DefaultContinuityController.STALL_DEBOUNCE_MS
     ) {
+      // Reopening a source costs seconds; a stall the seek head can escape costs nothing.
+      if (this.tryStallSeek(metrics)) {
+        return
+      }
       if (!this.applyPlaybackRateSafely(1, true)) {
         return
       }
@@ -788,10 +794,65 @@ class DefaultContinuityController implements ContinuityController {
       this.recoveryTimer = null
       const pendingReason = this.pendingRecoveryReason
       this.pendingRecoveryReason = null
-      if (pendingReason !== null) {
-        this.requestRecovery(pendingReason)
+      if (pendingReason === null) {
+        return
       }
+      if (this.seekPastStall(pendingReason)) {
+        this.scheduleRecovery(pendingReason, DefaultContinuityController.STALL_DEBOUNCE_MS)
+        return
+      }
+      this.requestRecovery(pendingReason)
     }, delayMs)
+  }
+
+  // A resumed stream cancels this pending recovery on its own 'playing' event.
+  private seekPastStall(reason: ContinuityRecoveryReason): boolean {
+    if (reason !== 'stall' && reason !== 'latency') {
+      return false
+    }
+    let metrics: PlaybackMetrics
+    try {
+      metrics = this.adapter.getMetrics()
+    } catch {
+      return false
+    }
+    return this.tryStallSeek(metrics)
+  }
+
+  private tryStallSeek(metrics: PlaybackMetrics): boolean {
+    const seek = this.adapter.seek?.bind(this.adapter)
+    if (seek === undefined || this.stallSeeks >= this.policy.maxStallSeeksPerSource) {
+      return false
+    }
+
+    const gap = metrics.strandedGapSeconds
+    let target: number
+    if (typeof gap === 'number') {
+      if (gap <= 0 || gap > this.policy.maxGapJumpSeconds) return false
+      target = metrics.currentTimeSeconds + gap + this.policy.stallNudgeSeconds
+    } else if (metrics.bufferedAheadSeconds > this.policy.stallNudgeSeconds) {
+      target = metrics.currentTimeSeconds + this.policy.stallNudgeSeconds
+    } else {
+      return false
+    }
+
+    this.stallSeeks += 1
+    try {
+      seek(target)
+    } catch {
+      return false
+    }
+    this.diagnostics.emit({
+      scope: 'continuity',
+      code: 'stall-seek',
+      level: 'info',
+      generation: this.machine.generation,
+      detail: {
+        attempt: this.stallSeeks,
+        stranded: typeof gap === 'number',
+      },
+    })
+    return true
   }
 
   private requestRecovery(reason: ContinuityRecoveryReason): void {

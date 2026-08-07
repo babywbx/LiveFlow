@@ -22,6 +22,8 @@ export class FakePlayerAdapter implements LivePlayerAdapter {
   private readonly discarded = new Set<number>()
   private readonly liveResources = new Set<number>()
   private metrics = DEFAULT_METRICS
+  private readonly seekTargets: number[] = []
+  private seekError: Error | null = null
   private destroyed = false
   private destroyCalls = 0
   private currentPlaybackRate = 1
@@ -156,6 +158,23 @@ export class FakePlayerAdapter implements LivePlayerAdapter {
 
   setMetrics(metrics: PlaybackMetrics): void {
     this.metrics = metrics
+  }
+
+  seek(seconds: number): void {
+    if (this.seekError !== null) {
+      const error = this.seekError
+      this.seekError = null
+      throw error
+    }
+    this.seekTargets.push(seconds)
+  }
+
+  seeks(): readonly number[] {
+    return this.seekTargets
+  }
+
+  failNextSeek(error: Error): void {
+    this.seekError = error
   }
 
   playbackRate(): number {

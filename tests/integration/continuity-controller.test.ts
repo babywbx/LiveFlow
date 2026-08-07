@@ -1029,7 +1029,7 @@ describe('continuity controller', () => {
     await controller.destroy()
   })
 
-  it('recovers when sampled metrics show a sustained stall', async () => {
+  it('recovers when sampled metrics show a stall no seek can clear', async () => {
     const adapter = new FakePlayerAdapter()
     const clock = new FakeClock()
     const reasons: string[] = []
@@ -1037,6 +1037,7 @@ describe('continuity controller', () => {
       adapter,
       contractVersion: CONTRACT_VERSION,
       clock,
+      policy: { maxStallSeeksPerSource: 2 },
       onRecoveryRequest: (request) => {
         reasons.push(request.reason)
       },
@@ -1055,6 +1056,11 @@ describe('continuity controller', () => {
       stalledSince: 0,
       droppedFrames: null,
     })
+
+    clock.advanceBy(500)
+    clock.advanceBy(500)
+    expect(adapter.seeks()).toEqual([5.1, 5.1])
+    expect(reasons).toEqual([])
 
     clock.advanceBy(500)
 
@@ -1110,6 +1116,7 @@ describe('continuity controller', () => {
       policy: {
         maxAutomaticRecoveries: 1,
         recoveryCooldownMs: 500,
+        maxStallSeeksPerSource: 0,
       },
       onRecoveryRequest: () => {},
       onDiagnostic: (event) => {

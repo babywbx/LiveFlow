@@ -10,6 +10,9 @@ export const DEFAULT_CONTINUITY_POLICY: Readonly<ContinuityPolicy> = {
   sourceWarmupTimeoutMs: 8_000,
   reopenGraceMs: 90_000,
   maxAutomaticRecoveries: 4,
+  maxGapJumpSeconds: 30,
+  stallNudgeSeconds: 0.1,
+  maxStallSeeksPerSource: 3,
 }
 
 export function resolveContinuityPolicy(
@@ -31,6 +34,10 @@ export function resolveContinuityPolicy(
     reopenGraceMs: overrides?.reopenGraceMs ?? DEFAULT_CONTINUITY_POLICY.reopenGraceMs,
     maxAutomaticRecoveries:
       overrides?.maxAutomaticRecoveries ?? DEFAULT_CONTINUITY_POLICY.maxAutomaticRecoveries,
+    maxGapJumpSeconds: overrides?.maxGapJumpSeconds ?? DEFAULT_CONTINUITY_POLICY.maxGapJumpSeconds,
+    stallNudgeSeconds: overrides?.stallNudgeSeconds ?? DEFAULT_CONTINUITY_POLICY.stallNudgeSeconds,
+    maxStallSeeksPerSource:
+      overrides?.maxStallSeeksPerSource ?? DEFAULT_CONTINUITY_POLICY.maxStallSeeksPerSource,
   }
 
   validateContinuityPolicy(policy)
@@ -44,6 +51,16 @@ function validateContinuityPolicy(policy: ContinuityPolicy): void {
   requireFinitePositive('recoveryCooldownMs', policy.recoveryCooldownMs)
   requireFinitePositive('sourceWarmupTimeoutMs', policy.sourceWarmupTimeoutMs)
   requireFinitePositive('reopenGraceMs', policy.reopenGraceMs)
+  requireFinitePositive('maxGapJumpSeconds', policy.maxGapJumpSeconds)
+  requireFinitePositive('stallNudgeSeconds', policy.stallNudgeSeconds)
+
+  if (
+    !Number.isInteger(policy.maxStallSeeksPerSource) ||
+    policy.maxStallSeeksPerSource < 0 ||
+    policy.maxStallSeeksPerSource > 100
+  ) {
+    throw new InvalidContinuityPolicyError('maxStallSeeksPerSource')
+  }
 
   if (policy.catchupRate <= 1 || policy.catchupRate > 1.1 || !Number.isFinite(policy.catchupRate)) {
     throw new InvalidContinuityPolicyError('catchupRate')

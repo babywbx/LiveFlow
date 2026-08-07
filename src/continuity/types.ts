@@ -38,6 +38,7 @@ export interface PlaybackMetrics {
   playbackRate: number
   stalledSince: number | null
   droppedFrames: number | null
+  strandedGapSeconds?: number | null
 }
 
 export type PlaybackEvent =
@@ -63,6 +64,7 @@ export interface LivePlayerAdapter {
   getMetrics(): PlaybackMetrics
   subscribe(listener: PlaybackEventListener): () => void
   destroy(): Promise<void>
+  seek?(seconds: number): void
 }
 
 export interface ContinuityPolicy {
@@ -74,6 +76,9 @@ export interface ContinuityPolicy {
   sourceWarmupTimeoutMs: number
   reopenGraceMs: number
   maxAutomaticRecoveries: number
+  maxGapJumpSeconds: number
+  stallNudgeSeconds: number
+  maxStallSeeksPerSource: number
 }
 
 export interface ContinuitySnapshot {

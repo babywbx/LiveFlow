@@ -36,6 +36,7 @@ class DefaultContinuityController {
     warmingPrepared = null;
     lastRecoveryAt = null;
     hardLatencySamples = 0;
+    stallSeeks = 0;
     appliedPlaybackRate = 1;
     lastPlaybackRateChangeAt = null;
     healthySince = null;
@@ -63,6 +64,7 @@ class DefaultContinuityController {
         this.cancelRecovery();
         this.cancelSourceTimeout();
         this.hardLatencySamples = 0;
+        this.stallSeeks = 0;
         this.applyPlaybackRateForSourceChange();
         const generation = this.machine.generation + 1;
         this.transition({ type: 'source-requested', generation });
@@ -514,6 +516,9 @@ class DefaultContinuityController {
         const catchupBoundary = this.policy.targetLatencySeconds + this.policy.softCatchupThresholdSeconds;
         if (metrics.stalledSince !== null &&
             this.clock.now() - metrics.stalledSince >= DefaultContinuityController.STALL_DEBOUNCE_MS) {
+            if (this.tryStallSeek(metrics)) {
+                return;
+            }
             if (!this.applyPlaybackRateSafely(1, true)) {
                 return;
             }
@@ -648,10 +653,65 @@ class DefaultContinuityController {
             this.recoveryTimer = null;
             const pendingReason = this.pendingRecoveryReason;
             this.pendingRecoveryReason = null;
-            if (pendingReason !== null) {
-                this.requestRecovery(pendingReason);
+            if (pendingReason === null) {
+                return;
             }
+            if (this.seekPastStall(pendingReason)) {
+                this.scheduleRecovery(pendingReason, DefaultContinuityController.STALL_DEBOUNCE_MS);
+                return;
+            }
+            this.requestRecovery(pendingReason);
         }, delayMs);
+    }
+    seekPastStall(reason) {
+        if (reason !== 'stall' && reason !== 'latency') {
+            return false;
+        }
+        let metrics;
+        try {
+            metrics = this.adapter.getMetrics();
+        }
+        catch {
+            return false;
+        }
+        return this.tryStallSeek(metrics);
+    }
+    tryStallSeek(metrics) {
+        const seek = this.adapter.seek?.bind(this.adapter);
+        if (seek === undefined || this.stallSeeks >= this.policy.maxStallSeeksPerSource) {
+            return false;
+        }
+        const gap = metrics.strandedGapSeconds;
+        let target;
+        if (typeof gap === 'number') {
+            if (gap <= 0 || gap > this.policy.maxGapJumpSeconds)
+                return false;
+            target = metrics.currentTimeSeconds + gap + this.policy.stallNudgeSeconds;
+        }
+        else if (metrics.bufferedAheadSeconds > this.policy.stallNudgeSeconds) {
+            target = metrics.currentTimeSeconds + this.policy.stallNudgeSeconds;
+        }
+        else {
+            return false;
+        }
+        this.stallSeeks += 1;
+        try {
+            seek(target);
+        }
+        catch {
+            return false;
+        }
+        this.diagnostics.emit({
+            scope: 'continuity',
+            code: 'stall-seek',
+            level: 'info',
+            generation: this.machine.generation,
+            detail: {
+                attempt: this.stallSeeks,
+                stranded: typeof gap === 'number',
+            },
+        });
+        return true;
     }
     requestRecovery(reason) {
         if (this.machine.state === 'stopped' || this.machine.state === 'playing') {

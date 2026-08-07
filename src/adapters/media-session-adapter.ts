@@ -295,6 +295,22 @@ export function createMediaSessionAdapter<Resource>(
       }
     },
 
+    seek(seconds: number): void {
+      ensureActive()
+      if (current === null) {
+        throw new PlayerAdapterError('media-session-unavailable', 'seek')
+      }
+      if (!Number.isFinite(seconds) || seconds < 0) {
+        throw new PlayerAdapterError('media-seek-failed', 'seek')
+      }
+
+      try {
+        driver.video(current.resource).currentTime = seconds
+      } catch {
+        throw new PlayerAdapterError('media-seek-failed', 'seek')
+      }
+    },
+
     subscribe(listener: PlaybackEventListener): () => void {
       ensureActive()
       if (!listeners.has(listener) && listeners.size >= MAX_LISTENERS) {
@@ -587,17 +603,22 @@ function readMetrics(video: VideoElementLike, stalledSince: number | null): Play
   const currentTime = video.currentTime
   let bufferedAhead = 0
   let liveEdge = currentTime
+  let inRange = false
+  let nextStart: number | null = null
 
   for (let index = 0; index < video.buffered.length; index += 1) {
     const start = video.buffered.start(index)
     const end = video.buffered.end(index)
     if (currentTime >= start && currentTime <= end) {
+      inRange = true
       bufferedAhead = Math.max(bufferedAhead, end - currentTime)
+    } else if (start > currentTime && (nextStart === null || start < nextStart)) {
+      nextStart = start
     }
     liveEdge = Math.max(liveEdge, end)
   }
 
-  return {
+  const metrics: PlaybackMetrics = {
     currentTimeSeconds: currentTime,
     bufferedAheadSeconds: Math.max(0, bufferedAhead),
     liveEdgeDistanceSeconds: Math.max(0, liveEdge - currentTime),
@@ -605,4 +626,6 @@ function readMetrics(video: VideoElementLike, stalledSince: number | null): Play
     stalledSince,
     droppedFrames: video.getVideoPlaybackQuality?.().droppedVideoFrames ?? null,
   }
+  if (inRange || nextStart === null) return metrics
+  return { ...metrics, strandedGapSeconds: nextStart - currentTime }
 }

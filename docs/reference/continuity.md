@@ -202,10 +202,28 @@ interface PlaybackMetrics {
 | `sourceWarmupTimeoutMs`       |  `8000` |
 | `reopenGraceMs`               | `90000` |
 | `maxAutomaticRecoveries`      |     `4` |
+| `maxGapJumpSeconds`           |    `30` |
+| `stallNudgeSeconds`           |   `0.1` |
+| `maxStallSeeksPerSource`      |     `3` |
 
 非法数值或互相矛盾的阈值会在创建时抛出
 `InvalidContinuityPolicyError`。`reopenGraceMs` 已进入契约，但当前连续性 MVP 不负责把
 平台状态判定为离线；调用方仍拥有最终离线展示时机。
+
+## 卡顿先解救，再换源
+
+重开一路源要花掉数秒，而相当一部分卡顿只是播放头需要挪一下。适配器可选实现
+`seek(seconds)`，控制器在 `stall` 与 `latency` 两种恢复真正发起之前会先尝试解救：
+
+- **缓冲出现空洞**：`getMetrics()` 返回 `strandedGapSeconds` 时，说明播放头落在两段缓冲
+  之间的空洞里。这种情况尾距指标看起来很大，实际却永远等不到数据。控制器跳到下一段
+  起点之后 `stallNudgeSeconds` 处；空洞超过 `maxGapJumpSeconds` 则放弃，交给换源。
+- **段内冻结**：播放头仍在有效缓冲段内、前方也有数据却不前进时，推进
+  `stallNudgeSeconds`。
+
+每个源最多尝试 `maxStallSeeksPerSource` 次，用尽后按原路径请求恢复。解救成功后流自身的
+`playing` 事件会取消待发的恢复请求；没能救活则在下一个防抖窗口继续，直到次数耗尽。
+适配器未实现 `seek` 时该机制整体跳过，行为与之前一致。
 
 ## 恢复请求
 
