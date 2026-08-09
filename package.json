@@ -14,6 +14,9 @@
     "docs",
     "README.md",
     "README.en.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
     "THIRD_PARTY_NOTICES.md",
     "LICENSE"
   ],
@@ -91,23 +94,26 @@
     "test:browser": "playwright test",
     "test:soak": "vitest run --config vitest.soak.config.ts",
     "test:soak:browser": "BROWSER_SOAK_DURATION_MS=21600000 playwright test tests/browser/runtime-soak.spec.ts --project=chromium --workers=1",
+    "audit:check": "pnpm audit --audit-level info",
+    "consumer:check": "node scripts/check-consumer.mjs",
     "examples:check": "pnpm --filter liveflow-examples build",
     "docs:check": "node scripts/check-doc-links.mjs",
     "size:check": "node scripts/check-bundle-size.mjs",
-    "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm docs:check && pnpm test && pnpm build && pnpm size:check && pnpm examples:check"
+    "check": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm docs:check && pnpm test && pnpm test:soak && pnpm build && pnpm size:check && pnpm examples:check && pnpm consumer:check"
   },
+  "dependencies": {},
   "devDependencies": {
-    "@playwright/test": "^1.61.1",
-    "@types/node": "^26.1.1",
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^26.2.0",
     "esbuild": "^0.28.1",
-    "oxfmt": "^0.60.0",
-    "oxlint": "^1.75.0",
+    "oxfmt": "^0.62.0",
+    "oxlint": "^1.77.0",
     "oxlint-tsgolint": "^7.0.2001",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   },
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.13.0"
   },
   "packageManager": "pnpm@11.16.0"
 }

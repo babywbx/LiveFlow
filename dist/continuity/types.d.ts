@@ -72,7 +72,6 @@ export interface ContinuityPolicy {
     catchupRate: number;
     recoveryCooldownMs: number;
     sourceWarmupTimeoutMs: number;
-    reopenGraceMs: number;
     maxAutomaticRecoveries: number;
     maxGapJumpSeconds: number;
     stallNudgeSeconds: number;

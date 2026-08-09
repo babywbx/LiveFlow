@@ -21,9 +21,12 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with:
-          node-version: '24'
+          node-version: '22.13.0'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+
+      - name: Dependency Audit
+        run: pnpm audit:check
 
       - name: Format
         run: pnpm format:check
@@ -40,6 +43,9 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Synthetic Soak
+        run: pnpm test:soak
+
       - name: Package
         run: pnpm build
 
@@ -48,6 +54,9 @@ jobs:
 
       - name: Example
         run: pnpm examples:check
+
+      - name: Tarball Consumer
+        run: pnpm consumer:check
 
       - name: Zero Runtime Deps
         run: |
@@ -87,3 +96,17 @@ jobs:
             git status --porcelain -- dist
             exit 1
           fi
+
+  browser:
+    name: Test / Browsers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium firefox webkit
+      - run: pnpm test:browser

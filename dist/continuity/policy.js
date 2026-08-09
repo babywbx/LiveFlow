@@ -7,7 +7,6 @@ export const DEFAULT_CONTINUITY_POLICY = {
     catchupRate: 1.04,
     recoveryCooldownMs: 30_000,
     sourceWarmupTimeoutMs: 8_000,
-    reopenGraceMs: 90_000,
     maxAutomaticRecoveries: 4,
     maxGapJumpSeconds: 30,
     stallNudgeSeconds: 0.1,
@@ -24,7 +23,6 @@ export function resolveContinuityPolicy(overrides) {
         catchupRate: overrides?.catchupRate ?? DEFAULT_CONTINUITY_POLICY.catchupRate,
         recoveryCooldownMs: overrides?.recoveryCooldownMs ?? DEFAULT_CONTINUITY_POLICY.recoveryCooldownMs,
         sourceWarmupTimeoutMs: overrides?.sourceWarmupTimeoutMs ?? DEFAULT_CONTINUITY_POLICY.sourceWarmupTimeoutMs,
-        reopenGraceMs: overrides?.reopenGraceMs ?? DEFAULT_CONTINUITY_POLICY.reopenGraceMs,
         maxAutomaticRecoveries: overrides?.maxAutomaticRecoveries ?? DEFAULT_CONTINUITY_POLICY.maxAutomaticRecoveries,
         maxGapJumpSeconds: overrides?.maxGapJumpSeconds ?? DEFAULT_CONTINUITY_POLICY.maxGapJumpSeconds,
         stallNudgeSeconds: overrides?.stallNudgeSeconds ?? DEFAULT_CONTINUITY_POLICY.stallNudgeSeconds,
@@ -39,7 +37,6 @@ function validateContinuityPolicy(policy) {
     requireFinitePositive('hardResyncThresholdSeconds', policy.hardResyncThresholdSeconds);
     requireFinitePositive('recoveryCooldownMs', policy.recoveryCooldownMs);
     requireFinitePositive('sourceWarmupTimeoutMs', policy.sourceWarmupTimeoutMs);
-    requireFinitePositive('reopenGraceMs', policy.reopenGraceMs);
     requireFinitePositive('maxGapJumpSeconds', policy.maxGapJumpSeconds);
     requireFinitePositive('stallNudgeSeconds', policy.stallNudgeSeconds);
     if (!Number.isInteger(policy.maxStallSeeksPerSource) ||

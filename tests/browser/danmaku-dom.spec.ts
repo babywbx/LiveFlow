@@ -55,7 +55,7 @@ const fixtureHtml = `<!doctype html>
     <button id="destroy">destroy</button>
     <script type="module">
       import { createDomDanmakuRenderer } from '/danmaku/renderers/index.js'
-      import { createOverlayEngine } from '/overlay/index.js'
+      import { CONTRACT_VERSION, createOverlayEngine } from '/overlay/index.js'
 
       const container = document.querySelector('#fixture')
       const renderer = createDomDanmakuRenderer({
@@ -92,7 +92,7 @@ const fixtureHtml = `<!doctype html>
         unmounts: [],
       })
       const overlay = createOverlayEngine({
-        contractVersion: 1,
+        contractVersion: CONTRACT_VERSION,
         instanceId: 'browser-safe-dom',
         container: document.querySelector('#overlay'),
         assetResolver: {
