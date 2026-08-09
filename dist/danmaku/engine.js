@@ -1,8 +1,8 @@
 import { createSystemClock } from '../shared/clock.js';
 import { CONTRACT_VERSION } from '../shared/contract.js';
 import { ContractVersionMismatchError } from '../shared/errors.js';
-import { DanmakuRendererError, InvalidDanmakuConfigurationError, NonMonotonicDanmakuClockError, } from './errors.js';
-import { emitSanitizationDiagnostics, resolveLimits, resolvePolicy, sanitizeMessage, validateViewport, } from './validation.js';
+import { DanmakuRendererError, InvalidDanmakuConfigurationError, InvalidDanmakuMessageError, NonMonotonicDanmakuClockError, } from './errors.js';
+import { emitSanitizationDiagnostics, resolveLimits, resolvePolicy, sanitizeMessage, validateRequiredMessageFields, validateViewport, } from './validation.js';
 const MAX_DIAGNOSTIC_CODES = 16;
 const DIAGNOSTIC_COOLDOWN_MS = 1_000;
 export function createDanmakuEngine(options) {
@@ -24,6 +24,7 @@ export function createDanmakuEngine(options) {
     let frameHandle = null;
     let pausedAt = null;
     let destroyed = false;
+    let rendererDestroyed = false;
     let fatalError = null;
     const pending = [];
     const visible = [];
@@ -52,22 +53,35 @@ export function createDanmakuEngine(options) {
         push(input) {
             ensureActive();
             const now = readNow();
-            const sanitized = sanitizeMessage(input, limits);
+            let required;
+            try {
+                required = validateRequiredMessageFields(input);
+            }
+            catch (error) {
+                throw normalizeInvalidMessageError(error);
+            }
             metrics.received += 1;
-            if (sanitized.message.text.length > limits.maxTextLength) {
-                recordDrop('text-too-long');
-                return { accepted: false, reason: 'text-too-long' };
-            }
-            if (sanitized.metadataDiscarded) {
-                metrics.metadataDiscarded += 1;
-            }
-            emitSanitizationDiagnostics(sanitized, emitDiagnostic);
             pruneRateWindow(intakeTimes, now);
             if (intakeTimes.length >= limits.maxIntakePerSecond) {
                 recordDrop('input-rate');
                 return { accepted: false, reason: 'input-rate' };
             }
             intakeTimes.push(now);
+            if (required.text.length > limits.maxTextLength) {
+                recordDrop('text-too-long');
+                return { accepted: false, reason: 'text-too-long' };
+            }
+            let sanitized;
+            try {
+                sanitized = sanitizeMessage(input, required, limits);
+            }
+            catch (error) {
+                throw normalizeInvalidMessageError(error);
+            }
+            if (sanitized.metadataDiscarded) {
+                metrics.metadataDiscarded += 1;
+            }
+            emitSanitizationDiagnostics(sanitized, emitDiagnostic);
             if (isRecentDuplicate(sanitized.message, now)) {
                 recordDrop('duplicate');
                 return { accepted: false, reason: 'duplicate' };
@@ -98,8 +112,9 @@ export function createDanmakuEngine(options) {
             if (pausedAt !== null) {
                 return;
             }
-            pausedAt = readNow();
+            const now = readNow();
             cancelFrame();
+            pausedAt = now;
             callRenderer('pause', () => {
                 renderer.setPaused(true);
             });
@@ -129,46 +144,75 @@ export function createDanmakuEngine(options) {
         resize(nextViewport, nextPolicy) {
             ensureActive();
             validateViewport(nextViewport);
-            if (nextPolicy !== undefined) {
-                policy = resolvePolicy({ ...policy, ...nextPolicy });
+            const resolvedPolicy = nextPolicy === undefined ? policy : resolvePolicy({ ...policy, ...nextPolicy });
+            const clockNow = readNow();
+            const now = pausedAt ?? clockNow;
+            const scrollPositions = new Map();
+            for (const item of visible) {
+                if (item.message.mode === 'scroll') {
+                    scrollPositions.set(item, positionAt(item, now).x);
+                }
             }
-            const now = readNow();
+            policy = resolvedPolicy;
             viewport = { ...nextViewport };
             laneCount = calculateLaneCount(viewport, policy);
             const unmounts = [];
-            for (let index = visible.length - 1; index >= 0; index -= 1) {
-                const item = visible[index];
-                if (item !== undefined && item.lane + item.laneSpan > laneCount) {
-                    visible.splice(index, 1);
+            const retained = [];
+            for (const item of visible) {
+                const previousX = scrollPositions.get(item);
+                if (previousX !== undefined) {
+                    rebaseScrollPosition(item, previousX, now);
+                }
+                item.laneSpan = Math.max(1, Math.ceil(item.height / policy.laneHeight));
+                if (item.lane + item.laneSpan > laneCount ||
+                    retained.some((existing) => visibleItemsConflict(item, existing, now))) {
                     unmounts.push(item.message.id);
                     recordDrop('no-lane');
                 }
+                else {
+                    retained.push(item);
+                }
             }
+            visible.length = 0;
+            visible.push(...retained);
             callRenderer('resize', () => {
                 renderer.resize(viewport);
             });
-            if (unmounts.length > 0) {
+            const updates = collectPositions(now);
+            if (updates.length > 0 || unmounts.length > 0) {
                 callRenderer('render', () => {
-                    renderer.render({ timestamp: now, mounts: [], updates: [], unmounts });
+                    renderer.render({ timestamp: now, mounts: [], updates, unmounts });
                 });
             }
             scheduleFrame();
         },
         destroy() {
-            if (destroyed) {
+            if (destroyed && frameHandle === null && rendererDestroyed) {
                 return;
             }
             destroyed = true;
-            cancelFrame();
+            let cleanupFailed = false;
+            try {
+                cancelFrame();
+            }
+            catch {
+                cleanupFailed = true;
+            }
             pending.length = 0;
             visible.length = 0;
             intakeTimes.length = 0;
             displayTimes.length = 0;
             diagnosticTimes.clear();
             try {
-                renderer.destroy();
+                if (!rendererDestroyed) {
+                    renderer.destroy();
+                    rendererDestroyed = true;
+                }
             }
             catch {
+                cleanupFailed = true;
+            }
+            if (cleanupFailed) {
                 throw new DanmakuRendererError('destroy');
             }
         },
@@ -255,17 +299,18 @@ export function createDanmakuEngine(options) {
         if (frameHandle === null) {
             return;
         }
-        clock.cancelFrame(frameHandle);
+        const handle = frameHandle;
+        clock.cancelFrame(handle);
         frameHandle = null;
     }
-    function runFrame(timestamp) {
+    function runFrame() {
         frameHandle = null;
         if (destroyed || pausedAt !== null || fatalError !== null) {
             return;
         }
         let now;
         try {
-            now = readFrameTime(timestamp);
+            now = readNow();
         }
         catch {
             fatalError = new NonMonotonicDanmakuClockError();
@@ -304,13 +349,6 @@ export function createDanmakuEngine(options) {
         }
         scheduleFrame();
     }
-    function readFrameTime(timestamp) {
-        const clockNow = readNow();
-        if (!Number.isFinite(timestamp)) {
-            return clockNow;
-        }
-        return clockNow;
-    }
     function expireVisible(now) {
         const unmounts = [];
         for (let index = visible.length - 1; index >= 0; index -= 1) {
@@ -344,23 +382,41 @@ export function createDanmakuEngine(options) {
             return [];
         }
         const candidates = pending.slice(0, Math.min(pending.length, limits.maxMountsPerFrame, limits.maxVisible - visible.length, limits.maxDisplayPerSecond - displayTimes.length));
-        let measurements;
+        const byId = new Map();
         try {
-            measurements = renderer.measure(candidates.map((item) => item.message));
+            const measurements = renderer.measure(candidates.map((item) => item.message));
+            if (!Array.isArray(measurements)) {
+                throw new Error('measurement collection');
+            }
+            const measurementCount = measurements.length;
+            if (typeof measurementCount !== 'number' ||
+                !Number.isSafeInteger(measurementCount) ||
+                measurementCount < 0) {
+                throw new Error('measurement collection');
+            }
+            const retainedCount = Math.min(measurementCount, limits.maxMountsPerFrame);
+            for (let index = 0; index < retainedCount; index += 1) {
+                const measurement = measurements[index];
+                if (typeof measurement !== 'object' || measurement === null) {
+                    continue;
+                }
+                const id = Reflect.get(measurement, 'id');
+                const width = Reflect.get(measurement, 'width');
+                const height = Reflect.get(measurement, 'height');
+                if (typeof id === 'string' &&
+                    typeof width === 'number' &&
+                    Number.isFinite(width) &&
+                    width > 0 &&
+                    typeof height === 'number' &&
+                    Number.isFinite(height) &&
+                    height > 0) {
+                    byId.set(id, { id, width, height });
+                }
+            }
         }
         catch {
             failRenderer('measure');
             return [];
-        }
-        const byId = new Map();
-        for (const measurement of measurements.slice(0, limits.maxMountsPerFrame)) {
-            if (typeof measurement.id === 'string' &&
-                Number.isFinite(measurement.width) &&
-                measurement.width > 0 &&
-                Number.isFinite(measurement.height) &&
-                measurement.height > 0) {
-                byId.set(measurement.id, measurement);
-            }
         }
         const mounts = [];
         for (const candidate of candidates) {
@@ -463,6 +519,18 @@ export function createDanmakuEngine(options) {
         }
         return true;
     }
+    function visibleItemsConflict(candidate, existing, now) {
+        if (!spansOverlap(candidate.lane, candidate.laneSpan, existing.lane, existing.laneSpan)) {
+            return false;
+        }
+        if (candidate.message.mode !== 'scroll' || existing.message.mode !== 'scroll') {
+            return true;
+        }
+        const candidateX = positionAt(candidate, now).x;
+        const existingX = positionAt(existing, now).x;
+        return (candidateX < existingX + existing.width + policy.laneGap &&
+            existingX < candidateX + candidate.width + policy.laneGap);
+    }
     function collectPositions(now) {
         return visible.map((item) => {
             const position = positionAt(item, now);
@@ -487,12 +555,18 @@ export function createDanmakuEngine(options) {
             y,
         };
     }
+    function rebaseScrollPosition(item, x, now) {
+        const duration = ((viewport.width + item.width) / policy.scrollPixelsPerSecond) * 1_000;
+        const progress = Math.min(1, Math.max(0, (viewport.width - x) / (viewport.width + item.width)));
+        item.startAt = now - progress * duration;
+        item.endAt = item.startAt + duration;
+    }
     function callRenderer(phase, operation) {
         try {
             operation();
         }
         catch {
-            throw new DanmakuRendererError(phase);
+            throw failRenderer(phase);
         }
     }
     function callRendererFromFrame(phase, operation) {
@@ -504,9 +578,15 @@ export function createDanmakuEngine(options) {
         }
     }
     function failRenderer(phase) {
-        fatalError = new DanmakuRendererError(phase);
-        cancelFrame();
+        const error = new DanmakuRendererError(phase);
+        fatalError = error;
+        try {
+            cancelFrame();
+        }
+        catch {
+        }
         emitDiagnostic({ scope: 'danmaku', code: 'renderer-failed', level: 'warn' });
+        return error;
     }
     function emitDiagnostic(event) {
         if (options.onDiagnostic === undefined) {
@@ -624,4 +704,15 @@ function isBetterForDisplay(candidate, existing) {
 }
 function spansOverlap(firstLane, firstSpan, secondLane, secondSpan) {
     return firstLane < secondLane + secondSpan && secondLane < firstLane + firstSpan;
+}
+function normalizeInvalidMessageError(error) {
+    try {
+        if (error instanceof InvalidDanmakuMessageError) {
+            return error;
+        }
+    }
+    catch {
+        return new InvalidDanmakuMessageError('message');
+    }
+    return new InvalidDanmakuMessageError('message');
 }

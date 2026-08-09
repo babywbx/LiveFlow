@@ -8,8 +8,17 @@ export interface SanitizedDanmakuMessage {
     readonly identitiesTruncated: boolean;
     readonly colorDiscarded: boolean;
 }
+interface RequiredDanmakuMessageFields {
+    readonly id: string;
+    readonly receivedAt: number;
+    readonly text: string;
+    readonly mode: DanmakuMessage['mode'];
+    readonly priority: number;
+}
 export declare function resolveLimits(input: Partial<DanmakuLimits> | undefined): DanmakuLimits;
 export declare function resolvePolicy(input: Partial<DanmakuPolicy> | undefined): DanmakuPolicy;
 export declare function validateViewport(viewport: DanmakuViewport): void;
-export declare function sanitizeMessage(input: DanmakuMessage, limits: DanmakuLimits): SanitizedDanmakuMessage;
+export declare function sanitizeMessage(input: DanmakuMessage, required: RequiredDanmakuMessageFields, limits: DanmakuLimits): SanitizedDanmakuMessage;
 export declare function emitSanitizationDiagnostics(sanitized: SanitizedDanmakuMessage, emit: (event: DiagnosticEvent) => void): void;
+export declare function validateRequiredMessageFields(input: DanmakuMessage): RequiredDanmakuMessageFields;
+export {};

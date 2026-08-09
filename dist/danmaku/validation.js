@@ -59,18 +59,14 @@ export function validateViewport(viewport) {
         throw new InvalidDanmakuConfigurationError('viewport.height');
     }
 }
-export function sanitizeMessage(input, limits) {
-    validateRequiredMessageFields(input);
-    const identitiesResult = sanitizeIdentities(input.identities, limits.maxBadgesPerMessage);
-    const metadataResult = sanitizeMetadata(input.metadata, limits);
-    const color = sanitizeColor(input.color);
-    const sender = sanitizeSender(input);
+export function sanitizeMessage(input, required, limits) {
+    const identitiesResult = sanitizeIdentities(readMessageField(input, 'identities'), limits.maxBadgesPerMessage);
+    const metadataResult = sanitizeMessageMetadata(input, limits);
+    const colorInput = readMessageField(input, 'color');
+    const color = sanitizeColor(colorInput);
+    const sender = sanitizeSender(readMessageField(input, 'sender'));
     const message = {
-        id: input.id,
-        receivedAt: input.receivedAt,
-        text: input.text,
-        mode: input.mode,
-        priority: input.priority,
+        ...required,
         ...(color === undefined ? {} : { color }),
         ...(sender === undefined ? {} : { sender }),
         ...(identitiesResult.identities === undefined
@@ -82,7 +78,7 @@ export function sanitizeMessage(input, limits) {
         message,
         metadataDiscarded: metadataResult.discarded,
         identitiesTruncated: identitiesResult.truncated,
-        colorDiscarded: input.color !== undefined && color === undefined,
+        colorDiscarded: colorInput !== undefined && color === undefined,
     };
 }
 export function emitSanitizationDiagnostics(sanitized, emit) {
@@ -118,33 +114,41 @@ function validatePositiveIntegerRecord(limits) {
         }
     }
 }
-function validateRequiredMessageFields(input) {
+export function validateRequiredMessageFields(input) {
     if (typeof input !== 'object' || input === null) {
         throw new InvalidDanmakuMessageError('message');
     }
-    validateBoundedString(input.id, 'id', MAX_ID_LENGTH, false);
-    if (!Number.isFinite(input.receivedAt) || input.receivedAt < 0) {
+    const id = readMessageField(input, 'id');
+    const receivedAt = readMessageField(input, 'receivedAt');
+    const text = readMessageField(input, 'text');
+    const mode = readMessageField(input, 'mode');
+    const priority = readMessageField(input, 'priority');
+    if (typeof id !== 'string') {
+        throw new InvalidDanmakuMessageError('id');
+    }
+    validateBoundedString(id, 'id', MAX_ID_LENGTH, false);
+    if (typeof receivedAt !== 'number' || !Number.isFinite(receivedAt) || receivedAt < 0) {
         throw new InvalidDanmakuMessageError('receivedAt');
     }
-    if (typeof input.text !== 'string' || input.text.length === 0) {
+    if (typeof text !== 'string' || text.length === 0) {
         throw new InvalidDanmakuMessageError('text');
     }
-    if (input.mode !== 'scroll' && input.mode !== 'top' && input.mode !== 'bottom') {
+    if (mode !== 'scroll' && mode !== 'top' && mode !== 'bottom') {
         throw new InvalidDanmakuMessageError('mode');
     }
-    if (!Number.isSafeInteger(input.priority)) {
+    if (typeof priority !== 'number' || !Number.isSafeInteger(priority)) {
         throw new InvalidDanmakuMessageError('priority');
     }
+    return { id, receivedAt, text, mode, priority };
 }
 function sanitizeSender(input) {
-    if (input.sender === undefined) {
+    if (input === undefined) {
         return undefined;
     }
-    const unknownSender = input.sender;
-    if (!isPlainRecord(unknownSender)) {
+    if (!isPlainRecord(input)) {
         throw new InvalidDanmakuMessageError('sender');
     }
-    const displayName = unknownSender.displayName;
+    const displayName = input.displayName;
     if (displayName === undefined) {
         return {};
     }
@@ -158,13 +162,17 @@ function sanitizeIdentities(input, limit) {
     if (input === undefined) {
         return { truncated: false };
     }
-    const unknownInput = input;
-    if (!Array.isArray(unknownInput)) {
+    if (!Array.isArray(input)) {
         throw new InvalidDanmakuMessageError('identities');
     }
     const identities = [];
-    const retained = unknownInput.slice(0, limit);
-    for (const identity of retained) {
+    const identityCount = input.length;
+    if (!Number.isSafeInteger(identityCount) || identityCount < 0) {
+        throw new InvalidDanmakuMessageError('identities');
+    }
+    const retainedCount = Math.min(identityCount, limit);
+    for (let index = 0; index < retainedCount; index += 1) {
+        const identity = input[index];
         if (!isPlainRecord(identity)) {
             throw new InvalidDanmakuMessageError('identities');
         }
@@ -198,7 +206,7 @@ function sanitizeIdentities(input, limit) {
     }
     return {
         identities,
-        truncated: unknownInput.length > limit,
+        truncated: identityCount > limit,
     };
 }
 function sanitizeMetadata(input, limits) {
@@ -206,54 +214,111 @@ function sanitizeMetadata(input, limits) {
         return { discarded: false };
     }
     try {
-        const budget = { keys: 0 };
-        const sanitized = copyMetadataValue(input, 0, budget, limits);
-        if (!isPlainRecord(sanitized)) {
-            return { discarded: true };
-        }
-        const serialized = JSON.stringify(sanitized);
-        if (new TextEncoder().encode(serialized).byteLength > limits.maxMetadataBytes) {
-            return { discarded: true };
-        }
+        const budget = { keys: 0, bytes: 0, encoder: new TextEncoder() };
+        const sanitized = copyMetadataObject(input, 0, budget, limits);
         return { metadata: sanitized, discarded: false };
     }
     catch {
         return { discarded: true };
     }
 }
+function sanitizeMessageMetadata(input, limits) {
+    try {
+        return sanitizeMetadata(readMessageField(input, 'metadata'), limits);
+    }
+    catch {
+        return { discarded: true };
+    }
+}
 function copyMetadataValue(value, depth, budget, limits) {
-    if (value === null ||
-        typeof value === 'string' ||
-        typeof value === 'boolean' ||
-        (typeof value === 'number' && Number.isFinite(value))) {
+    if (value === null) {
+        consumeMetadataBytes(4, budget, limits);
+        return value;
+    }
+    if (typeof value === 'string') {
+        consumeMetadataString(value, budget, limits);
+        return value;
+    }
+    if (typeof value === 'boolean') {
+        consumeMetadataBytes(value ? 4 : 5, budget, limits);
+        return value;
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        consumeMetadataBytes(String(value).length, budget, limits);
         return value;
     }
     if (depth >= limits.maxMetadataDepth) {
         throw new Error('metadata depth');
     }
     if (Array.isArray(value)) {
+        const items = value;
+        const itemCount = items.length;
+        reserveMetadataKeys(itemCount, budget, limits);
         const result = [];
-        for (const item of value) {
-            budget.keys += 1;
-            if (budget.keys > limits.maxMetadataKeys) {
-                throw new Error('metadata keys');
+        consumeMetadataBytes(2, budget, limits);
+        for (let index = 0; index < itemCount; index += 1) {
+            if (index > 0) {
+                consumeMetadataBytes(1, budget, limits);
             }
-            result.push(copyMetadataValue(item, depth + 1, budget, limits));
+            result.push(copyMetadataValue(items[index], depth + 1, budget, limits));
         }
         return result;
     }
+    return copyMetadataObject(value, depth, budget, limits);
+}
+function copyMetadataObject(value, depth, budget, limits) {
     if (!isPlainRecord(value)) {
         throw new Error('metadata value');
     }
-    const result = {};
-    for (const [key, nested] of Object.entries(value)) {
-        budget.keys += 1;
-        if (budget.keys > limits.maxMetadataKeys) {
-            throw new Error('metadata keys');
-        }
-        result[key] = copyMetadataValue(nested, depth + 1, budget, limits);
+    const unknownEntries = value.entries;
+    if (!Array.isArray(unknownEntries)) {
+        throw new Error('metadata value');
     }
-    return result;
+    const entries = unknownEntries;
+    const entryCount = entries.length;
+    reserveMetadataKeys(entryCount, budget, limits);
+    const result = [];
+    consumeMetadataBytes(2, budget, limits);
+    for (let index = 0; index < entryCount; index += 1) {
+        const entry = entries[index];
+        if (!Array.isArray(entry) || entry.length !== 2) {
+            throw new Error('metadata entry');
+        }
+        const key = entry[0];
+        if (typeof key !== 'string') {
+            throw new Error('metadata key');
+        }
+        if (index > 0) {
+            consumeMetadataBytes(1, budget, limits);
+        }
+        consumeMetadataString(key, budget, limits);
+        consumeMetadataBytes(1, budget, limits);
+        result.push([key, copyMetadataValue(entry[1], depth + 1, budget, limits)]);
+    }
+    return { entries: result };
+}
+function reserveMetadataKeys(count, budget, limits) {
+    if (!Number.isSafeInteger(count) || count < 0 || count > limits.maxMetadataKeys - budget.keys) {
+        throw new Error('metadata keys');
+    }
+    budget.keys += count;
+}
+function consumeMetadataString(value, budget, limits) {
+    const remaining = limits.maxMetadataBytes - budget.bytes;
+    if (value.length + 2 > remaining) {
+        throw new Error('metadata bytes');
+    }
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) {
+        throw new Error('metadata value');
+    }
+    consumeMetadataBytes(budget.encoder.encode(serialized).byteLength, budget, limits);
+}
+function consumeMetadataBytes(bytes, budget, limits) {
+    if (bytes > limits.maxMetadataBytes - budget.bytes) {
+        throw new Error('metadata bytes');
+    }
+    budget.bytes += bytes;
 }
 function isRecord(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -284,6 +349,9 @@ function sanitizeColor(color) {
         return color.toLowerCase();
     }
     return undefined;
+}
+function readMessageField(input, field) {
+    return Reflect.get(input, field);
 }
 function validateBoundedString(value, field, maxLength, allowEmpty) {
     if (typeof value !== 'string' ||

@@ -4,6 +4,9 @@ import type {
   DanmakuIdentity,
   DanmakuLimits,
   DanmakuMessage,
+  DanmakuMetadata,
+  DanmakuMetadataEntry,
+  DanmakuMetadataValue,
   DanmakuPolicy,
   DanmakuViewport,
 } from './types.js'
@@ -47,6 +50,20 @@ export interface SanitizedDanmakuMessage {
   readonly colorDiscarded: boolean
 }
 
+interface RequiredDanmakuMessageFields {
+  readonly id: string
+  readonly receivedAt: number
+  readonly text: string
+  readonly mode: DanmakuMessage['mode']
+  readonly priority: number
+}
+
+interface MetadataBudget {
+  keys: number
+  bytes: number
+  readonly encoder: TextEncoder
+}
+
 export function resolveLimits(input: Partial<DanmakuLimits> | undefined): DanmakuLimits {
   const limits: DanmakuLimits = {
     ...DEFAULT_DANMAKU_LIMITS,
@@ -85,20 +102,19 @@ export function validateViewport(viewport: DanmakuViewport): void {
 
 export function sanitizeMessage(
   input: DanmakuMessage,
+  required: RequiredDanmakuMessageFields,
   limits: DanmakuLimits,
 ): SanitizedDanmakuMessage {
-  validateRequiredMessageFields(input)
-
-  const identitiesResult = sanitizeIdentities(input.identities, limits.maxBadgesPerMessage)
-  const metadataResult = sanitizeMetadata(input.metadata, limits)
-  const color = sanitizeColor(input.color)
-  const sender = sanitizeSender(input)
+  const identitiesResult = sanitizeIdentities(
+    readMessageField(input, 'identities'),
+    limits.maxBadgesPerMessage,
+  )
+  const metadataResult = sanitizeMessageMetadata(input, limits)
+  const colorInput = readMessageField(input, 'color')
+  const color = sanitizeColor(colorInput)
+  const sender = sanitizeSender(readMessageField(input, 'sender'))
   const message: DanmakuMessage = {
-    id: input.id,
-    receivedAt: input.receivedAt,
-    text: input.text,
-    mode: input.mode,
-    priority: input.priority,
+    ...required,
     ...(color === undefined ? {} : { color }),
     ...(sender === undefined ? {} : { sender }),
     ...(identitiesResult.identities === undefined
@@ -111,7 +127,7 @@ export function sanitizeMessage(
     message,
     metadataDiscarded: metadataResult.discarded,
     identitiesTruncated: identitiesResult.truncated,
-    colorDiscarded: input.color !== undefined && color === undefined,
+    colorDiscarded: colorInput !== undefined && color === undefined,
   }
 }
 
@@ -153,34 +169,42 @@ function validatePositiveIntegerRecord(limits: DanmakuLimits): void {
   }
 }
 
-function validateRequiredMessageFields(input: DanmakuMessage): void {
+export function validateRequiredMessageFields(input: DanmakuMessage): RequiredDanmakuMessageFields {
   if (typeof input !== 'object' || input === null) {
     throw new InvalidDanmakuMessageError('message')
   }
-  validateBoundedString(input.id, 'id', MAX_ID_LENGTH, false)
-  if (!Number.isFinite(input.receivedAt) || input.receivedAt < 0) {
+  const id: unknown = readMessageField(input, 'id')
+  const receivedAt: unknown = readMessageField(input, 'receivedAt')
+  const text: unknown = readMessageField(input, 'text')
+  const mode: unknown = readMessageField(input, 'mode')
+  const priority: unknown = readMessageField(input, 'priority')
+  if (typeof id !== 'string') {
+    throw new InvalidDanmakuMessageError('id')
+  }
+  validateBoundedString(id, 'id', MAX_ID_LENGTH, false)
+  if (typeof receivedAt !== 'number' || !Number.isFinite(receivedAt) || receivedAt < 0) {
     throw new InvalidDanmakuMessageError('receivedAt')
   }
-  if (typeof input.text !== 'string' || input.text.length === 0) {
+  if (typeof text !== 'string' || text.length === 0) {
     throw new InvalidDanmakuMessageError('text')
   }
-  if (input.mode !== 'scroll' && input.mode !== 'top' && input.mode !== 'bottom') {
+  if (mode !== 'scroll' && mode !== 'top' && mode !== 'bottom') {
     throw new InvalidDanmakuMessageError('mode')
   }
-  if (!Number.isSafeInteger(input.priority)) {
+  if (typeof priority !== 'number' || !Number.isSafeInteger(priority)) {
     throw new InvalidDanmakuMessageError('priority')
   }
+  return { id, receivedAt, text, mode, priority }
 }
 
-function sanitizeSender(input: DanmakuMessage): { displayName?: string } | undefined {
-  if (input.sender === undefined) {
+function sanitizeSender(input: unknown): { displayName?: string } | undefined {
+  if (input === undefined) {
     return undefined
   }
-  const unknownSender: unknown = input.sender
-  if (!isPlainRecord(unknownSender)) {
+  if (!isPlainRecord(input)) {
     throw new InvalidDanmakuMessageError('sender')
   }
-  const displayName = unknownSender.displayName
+  const displayName = input.displayName
   if (displayName === undefined) {
     return {}
   }
@@ -192,20 +216,24 @@ function sanitizeSender(input: DanmakuMessage): { displayName?: string } | undef
 }
 
 function sanitizeIdentities(
-  input: readonly DanmakuIdentity[] | undefined,
+  input: unknown,
   limit: number,
 ): { identities?: readonly DanmakuIdentity[]; truncated: boolean } {
   if (input === undefined) {
     return { truncated: false }
   }
-  const unknownInput: readonly unknown[] = input
-  if (!Array.isArray(unknownInput)) {
+  if (!Array.isArray(input)) {
     throw new InvalidDanmakuMessageError('identities')
   }
 
   const identities: DanmakuIdentity[] = []
-  const retained = unknownInput.slice(0, limit)
-  for (const identity of retained) {
+  const identityCount = input.length
+  if (!Number.isSafeInteger(identityCount) || identityCount < 0) {
+    throw new InvalidDanmakuMessageError('identities')
+  }
+  const retainedCount = Math.min(identityCount, limit)
+  for (let index = 0; index < retainedCount; index += 1) {
+    const identity: unknown = input[index]
     if (!isPlainRecord(identity)) {
       throw new InvalidDanmakuMessageError('identities')
     }
@@ -241,28 +269,32 @@ function sanitizeIdentities(
   }
   return {
     identities,
-    truncated: unknownInput.length > limit,
+    truncated: identityCount > limit,
   }
 }
 
 function sanitizeMetadata(
-  input: Readonly<Record<string, unknown>> | undefined,
+  input: unknown,
   limits: DanmakuLimits,
-): { metadata?: Readonly<Record<string, unknown>>; discarded: boolean } {
+): { metadata?: DanmakuMetadata; discarded: boolean } {
   if (input === undefined) {
     return { discarded: false }
   }
   try {
-    const budget = { keys: 0 }
-    const sanitized = copyMetadataValue(input, 0, budget, limits)
-    if (!isPlainRecord(sanitized)) {
-      return { discarded: true }
-    }
-    const serialized = JSON.stringify(sanitized)
-    if (new TextEncoder().encode(serialized).byteLength > limits.maxMetadataBytes) {
-      return { discarded: true }
-    }
+    const budget: MetadataBudget = { keys: 0, bytes: 0, encoder: new TextEncoder() }
+    const sanitized = copyMetadataObject(input, 0, budget, limits)
     return { metadata: sanitized, discarded: false }
+  } catch {
+    return { discarded: true }
+  }
+}
+
+function sanitizeMessageMetadata(
+  input: DanmakuMessage,
+  limits: DanmakuLimits,
+): { metadata?: DanmakuMetadata; discarded: boolean } {
+  try {
+    return sanitizeMetadata(readMessageField(input, 'metadata'), limits)
   } catch {
     return { discarded: true }
   }
@@ -271,43 +303,106 @@ function sanitizeMetadata(
 function copyMetadataValue(
   value: unknown,
   depth: number,
-  budget: { keys: number },
+  budget: MetadataBudget,
   limits: DanmakuLimits,
-): unknown {
-  if (
-    value === null ||
-    typeof value === 'string' ||
-    typeof value === 'boolean' ||
-    (typeof value === 'number' && Number.isFinite(value))
-  ) {
+): DanmakuMetadataValue {
+  if (value === null) {
+    consumeMetadataBytes(4, budget, limits)
+    return value
+  }
+  if (typeof value === 'string') {
+    consumeMetadataString(value, budget, limits)
+    return value
+  }
+  if (typeof value === 'boolean') {
+    consumeMetadataBytes(value ? 4 : 5, budget, limits)
+    return value
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    consumeMetadataBytes(String(value).length, budget, limits)
     return value
   }
   if (depth >= limits.maxMetadataDepth) {
     throw new Error('metadata depth')
   }
   if (Array.isArray(value)) {
-    const result: unknown[] = []
-    for (const item of value) {
-      budget.keys += 1
-      if (budget.keys > limits.maxMetadataKeys) {
-        throw new Error('metadata keys')
+    const items: readonly unknown[] = value
+    const itemCount = items.length
+    reserveMetadataKeys(itemCount, budget, limits)
+    const result: DanmakuMetadataValue[] = []
+    consumeMetadataBytes(2, budget, limits)
+    for (let index = 0; index < itemCount; index += 1) {
+      if (index > 0) {
+        consumeMetadataBytes(1, budget, limits)
       }
-      result.push(copyMetadataValue(item, depth + 1, budget, limits))
+      result.push(copyMetadataValue(items[index], depth + 1, budget, limits))
     }
     return result
   }
+  return copyMetadataObject(value, depth, budget, limits)
+}
+
+function copyMetadataObject(
+  value: unknown,
+  depth: number,
+  budget: MetadataBudget,
+  limits: DanmakuLimits,
+): DanmakuMetadata {
   if (!isPlainRecord(value)) {
     throw new Error('metadata value')
   }
-  const result: Record<string, unknown> = {}
-  for (const [key, nested] of Object.entries(value)) {
-    budget.keys += 1
-    if (budget.keys > limits.maxMetadataKeys) {
-      throw new Error('metadata keys')
-    }
-    result[key] = copyMetadataValue(nested, depth + 1, budget, limits)
+  const unknownEntries: unknown = value.entries
+  if (!Array.isArray(unknownEntries)) {
+    throw new Error('metadata value')
   }
-  return result
+  const entries: readonly unknown[] = unknownEntries
+  const entryCount = entries.length
+  reserveMetadataKeys(entryCount, budget, limits)
+  const result: DanmakuMetadataEntry[] = []
+  consumeMetadataBytes(2, budget, limits)
+  for (let index = 0; index < entryCount; index += 1) {
+    const entry: unknown = entries[index]
+    if (!Array.isArray(entry) || entry.length !== 2) {
+      throw new Error('metadata entry')
+    }
+    const key: unknown = entry[0]
+    if (typeof key !== 'string') {
+      throw new Error('metadata key')
+    }
+    if (index > 0) {
+      consumeMetadataBytes(1, budget, limits)
+    }
+    consumeMetadataString(key, budget, limits)
+    consumeMetadataBytes(1, budget, limits)
+    result.push([key, copyMetadataValue(entry[1], depth + 1, budget, limits)])
+  }
+  return { entries: result }
+}
+
+function reserveMetadataKeys(count: number, budget: MetadataBudget, limits: DanmakuLimits): void {
+  if (!Number.isSafeInteger(count) || count < 0 || count > limits.maxMetadataKeys - budget.keys) {
+    throw new Error('metadata keys')
+  }
+  budget.keys += count
+}
+
+function consumeMetadataString(value: string, budget: MetadataBudget, limits: DanmakuLimits): void {
+  const remaining = limits.maxMetadataBytes - budget.bytes
+  if (value.length + 2 > remaining) {
+    throw new Error('metadata bytes')
+  }
+  const serialized = JSON.stringify(value)
+  if (serialized === undefined) {
+    throw new Error('metadata value')
+  }
+  consumeMetadataBytes(budget.encoder.encode(serialized).byteLength, budget, limits)
+}
+
+function consumeMetadataBytes(bytes: number, budget: MetadataBudget, limits: DanmakuLimits): void {
+  if (bytes > limits.maxMetadataBytes - budget.bytes) {
+    throw new Error('metadata bytes')
+  }
+  budget.bytes += bytes
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -322,7 +417,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null
 }
 
-function sanitizeColor(color: string | undefined): string | undefined {
+function sanitizeColor(color: unknown): string | undefined {
   if (color === undefined) {
     return undefined
   }
@@ -341,6 +436,10 @@ function sanitizeColor(color: string | undefined): string | undefined {
     return color.toLowerCase()
   }
   return undefined
+}
+
+function readMessageField(input: DanmakuMessage, field: keyof DanmakuMessage): unknown {
+  return Reflect.get(input, field)
 }
 
 function validateBoundedString(

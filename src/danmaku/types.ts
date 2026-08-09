@@ -15,6 +15,20 @@ export interface DanmakuSender {
   displayName?: string
 }
 
+export type DanmakuMetadataValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly DanmakuMetadataValue[]
+  | DanmakuMetadata
+
+export type DanmakuMetadataEntry = readonly [key: string, value: DanmakuMetadataValue]
+
+export interface DanmakuMetadata {
+  readonly entries: readonly DanmakuMetadataEntry[]
+}
+
 export interface DanmakuMessage {
   id: string
   receivedAt: number
@@ -24,7 +38,7 @@ export interface DanmakuMessage {
   color?: string
   sender?: DanmakuSender
   identities?: readonly DanmakuIdentity[]
-  metadata?: Readonly<Record<string, unknown>>
+  metadata?: DanmakuMetadata
 }
 
 export interface DanmakuLimits {

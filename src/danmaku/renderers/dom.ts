@@ -58,29 +58,39 @@ export function createDomDanmakuRenderer(options: DomDanmakuRendererOptions): Da
   const probe = document.createElement('div')
   const active = new Map<string, DomRecord>()
   const pool: HTMLDivElement[] = []
+  const pendingDisposables: { destroy(): void }[] = []
+  const pendingRoots = new Set<HTMLDivElement>()
   let viewport: DanmakuViewport = {
     width: Math.max(1, options.container.clientWidth),
     height: Math.max(1, options.container.clientHeight),
   }
   let destroyed = false
+  let cleanupComplete = false
   let paused = false
   let reducedMotion = options.reducedMotion ?? false
   let mediaQuery: MediaQueryList | null = null
 
-  configureLayer(layer)
-  configureProbe(probe)
-  layer.append(probe)
-  options.container.append(layer)
+  try {
+    configureLayer(layer)
+    configureProbe(probe)
+    layer.append(probe)
+    options.container.append(layer)
 
-  if (
-    options.reducedMotion === undefined &&
-    typeof document.defaultView?.matchMedia === 'function'
-  ) {
-    mediaQuery = document.defaultView.matchMedia('(prefers-reduced-motion: reduce)')
-    reducedMotion = mediaQuery.matches
-    mediaQuery.addEventListener('change', handleReducedMotionChange)
+    if (
+      options.reducedMotion === undefined &&
+      typeof document.defaultView?.matchMedia === 'function'
+    ) {
+      mediaQuery = document.defaultView.matchMedia('(prefers-reduced-motion: reduce)')
+      reducedMotion = mediaQuery.matches
+    }
+    updateLayerState()
+    mediaQuery?.addEventListener('change', handleReducedMotionChange)
+  } catch {
+    unbindMediaQuery()
+    removeElement(probe)
+    removeElement(layer)
+    throw new DanmakuRendererError('initialize')
   }
-  updateLayerState()
 
   return {
     measure(messages: readonly DanmakuMessage[]): readonly DanmakuMeasurement[] {
@@ -97,6 +107,7 @@ export function createDomDanmakuRenderer(options: DomDanmakuRendererOptions): Da
           measurements.push({ id: message.id, width, height })
         } catch (error) {
           const cleanupSucceeded = destroyDisposables(disposables)
+          retainDisposables(disposables)
           resetElement(probe)
           if (!cleanupSucceeded) {
             throw new DanmakuRendererError('identity-destroy')
@@ -107,6 +118,7 @@ export function createDomDanmakuRenderer(options: DomDanmakuRendererOptions): Da
           throw new DanmakuRendererError('measure')
         }
         const cleanupSucceeded = destroyDisposables(disposables)
+        retainDisposables(disposables)
         resetElement(probe)
         if (!cleanupSucceeded) {
           throw new DanmakuRendererError('identity-destroy')
@@ -164,29 +176,36 @@ export function createDomDanmakuRenderer(options: DomDanmakuRendererOptions): Da
       updateLayerState()
     },
     destroy(): void {
-      if (destroyed) {
+      if (cleanupComplete) {
         return
       }
       destroyed = true
-      if (mediaQuery !== null) {
-        mediaQuery.removeEventListener('change', handleReducedMotionChange)
-        mediaQuery = null
+      let cleanupFailed = !retryPendingCleanup() || !unbindMediaQuery()
+      let identityCleanupFailed = false
+      for (const [id, record] of active) {
+        const identitiesDestroyed = destroyDisposables(record.disposables)
+        const rootRemoved = removeElement(record.root)
+        identityCleanupFailed = !identitiesDestroyed || identityCleanupFailed
+        cleanupFailed = !rootRemoved || cleanupFailed
+        if (identitiesDestroyed && rootRemoved) {
+          active.delete(id)
+        }
       }
-      let cleanupFailed = false
-      for (const record of active.values()) {
-        cleanupFailed = !destroyDisposables(record.disposables) || cleanupFailed
-        record.root.remove()
+      cleanupFailed = identityCleanupFailed || cleanupFailed
+      for (let index = pool.length - 1; index >= 0; index -= 1) {
+        const root = pool[index]
+        if (root !== undefined && removeElement(root)) {
+          pool.splice(index, 1)
+        } else {
+          cleanupFailed = true
+        }
       }
-      active.clear()
-      for (const root of pool) {
-        root.remove()
-      }
-      pool.length = 0
-      probe.remove()
-      layer.remove()
+      cleanupFailed = !removeElement(probe) || cleanupFailed
+      cleanupFailed = !removeElement(layer) || cleanupFailed
       if (cleanupFailed) {
-        throw new DanmakuRendererError('identity-destroy')
+        throw new DanmakuRendererError(identityCleanupFailed ? 'identity-destroy' : 'destroy')
       }
+      cleanupComplete = true
     },
   }
 
@@ -210,28 +229,56 @@ export function createDomDanmakuRenderer(options: DomDanmakuRendererOptions): Da
     if (record === undefined) {
       return
     }
-    active.delete(id)
     const cleanupSucceeded = destroyDisposables(record.disposables)
-    resetRoot(record.root)
-    record.root.remove()
-    if (pool.length < maxPoolSize) {
-      pool.push(record.root)
+    let rootReleased = true
+    try {
+      resetRoot(record.root)
+      record.root.remove()
+    } catch {
+      rootReleased = false
     }
-    if (!cleanupSucceeded) {
+    if (cleanupSucceeded && rootReleased) {
+      active.delete(id)
+      if (pool.length < maxPoolSize) {
+        pool.push(record.root)
+      }
+    }
+    if (!cleanupSucceeded || !rootReleased) {
       throw new DanmakuRendererError('identity-destroy')
     }
   }
 
   function recycleFailedRecord(record: DomRecord): void {
     const cleanupSucceeded = destroyDisposables(record.disposables)
+    retainDisposables(record.disposables)
     resetRoot(record.root)
-    record.root.remove()
-    if (cleanupSucceeded && pool.length < maxPoolSize) {
+    const rootRemoved = removeElement(record.root)
+    if (!rootRemoved) {
+      pendingRoots.add(record.root)
+    }
+    if (cleanupSucceeded && rootRemoved && pool.length < maxPoolSize) {
       pool.push(record.root)
     }
-    if (!cleanupSucceeded) {
+    if (!cleanupSucceeded || !rootRemoved) {
       throw new DanmakuRendererError('identity-destroy')
     }
+  }
+
+  function retainDisposables(disposables: { destroy(): void }[]): void {
+    pendingDisposables.push(...disposables.splice(0))
+  }
+
+  function retryPendingCleanup(): boolean {
+    const disposablesDestroyed = destroyDisposables(pendingDisposables)
+    let rootsRemoved = true
+    for (const root of pendingRoots) {
+      if (removeElement(root)) {
+        pendingRoots.delete(root)
+      } else {
+        rootsRemoved = false
+      }
+    }
+    return disposablesDestroyed && rootsRemoved
   }
 
   function populateNode(
@@ -243,8 +290,13 @@ export function createDomDanmakuRenderer(options: DomDanmakuRendererOptions): Da
     root.className = 'liveflow-danmaku__message'
     root.dataset.mode = message.mode
 
-    const identities = message.identities?.slice(0, maxBadges) ?? []
-    for (const identity of identities) {
+    const identities = message.identities
+    const identityCount = Math.min(identities?.length ?? 0, maxBadges)
+    for (let index = 0; index < identityCount; index += 1) {
+      const identity = identities?.[index]
+      if (identity === undefined) {
+        throw new InvalidDanmakuMessageError('identities')
+      }
       const identityNode = document.createElement('span')
       identityNode.className = 'liveflow-danmaku__identity'
       identityNode.dataset.kind = identity.kind
@@ -352,6 +404,19 @@ export function createDomDanmakuRenderer(options: DomDanmakuRendererOptions): Da
     updateLayerState()
   }
 
+  function unbindMediaQuery(): boolean {
+    if (mediaQuery === null) {
+      return true
+    }
+    try {
+      mediaQuery.removeEventListener('change', handleReducedMotionChange)
+      mediaQuery = null
+      return true
+    } catch {
+      return false
+    }
+  }
+
   function updateLayerState(): void {
     layer.dataset.paused = paused ? 'true' : 'false'
     layer.dataset.reducedMotion = reducedMotion ? 'true' : 'false'
@@ -360,6 +425,9 @@ export function createDomDanmakuRenderer(options: DomDanmakuRendererOptions): Da
   function ensureActive(): void {
     if (destroyed) {
       throw new InvalidDanmakuConfigurationError('renderer.destroyed')
+    }
+    if (!retryPendingCleanup()) {
+      throw new DanmakuRendererError('identity-destroy')
     }
   }
 }
@@ -406,6 +474,15 @@ function resetElement(element: HTMLElement): void {
   element.replaceChildren()
 }
 
+function removeElement(element: HTMLElement): boolean {
+  try {
+    element.remove()
+    return true
+  } catch {
+    return false
+  }
+}
+
 function destroyDisposables(disposables: { destroy(): void }[]): boolean {
   let succeeded = true
   for (const disposable of disposables.splice(0)) {
@@ -413,6 +490,7 @@ function destroyDisposables(disposables: { destroy(): void }[]): boolean {
       disposable.destroy()
     } catch {
       succeeded = false
+      disposables.push(disposable)
     }
   }
   return succeeded
