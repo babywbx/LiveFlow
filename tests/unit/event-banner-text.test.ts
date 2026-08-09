@@ -62,6 +62,11 @@ describe('event banner text fitting', () => {
   })
 
   it('rejects a ladder that is empty, unsorted, non-finite or too long', () => {
+    const fractional = new Proxy([28], {
+      get(target, property, receiver): unknown {
+        return property === 'length' ? 0.5 : Reflect.get(target, property, receiver)
+      },
+    })
     expect(validateBannerFontSizes(FONT_SIZES)).toEqual(FONT_SIZES)
     expect(() => validateBannerFontSizes([])).toThrow(InvalidOverlayConfigurationError)
     expect(() => validateBannerFontSizes([22, 26])).toThrow(InvalidOverlayConfigurationError)
@@ -74,6 +79,7 @@ describe('event banner text fitting', () => {
         Array.from({ length: MAX_BANNER_FONT_STEPS + 1 }, (_unused, index) => 32 - index),
       ),
     ).toThrow(InvalidOverlayConfigurationError)
+    expect(() => validateBannerFontSizes(fractional)).toThrow(InvalidOverlayConfigurationError)
   })
 
   it('reports a configuration error instead of rendering text that cannot fit', () => {

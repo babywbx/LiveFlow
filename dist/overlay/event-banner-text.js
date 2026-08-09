@@ -2,7 +2,7 @@ import { InvalidOverlayConfigurationError, InvalidOverlayEventError } from './er
 export const MAX_BANNER_FONT_STEPS = 8;
 const ELLIPSIS = '…';
 export function normalizeBannerText(value, maxLength, field) {
-    if (typeof value !== 'string') {
+    if (typeof value !== 'string' || value.length > maxLength) {
         throw new InvalidOverlayEventError(field);
     }
     const text = value.replace(/\s+/gu, ' ').trim();
@@ -13,19 +13,27 @@ export function normalizeBannerText(value, maxLength, field) {
 }
 export function validateBannerFontSizes(fontSizes) {
     const candidate = fontSizes;
-    if (!Array.isArray(candidate) ||
-        fontSizes.length === 0 ||
-        fontSizes.length > MAX_BANNER_FONT_STEPS) {
+    if (!Array.isArray(candidate)) {
         throw new InvalidOverlayConfigurationError('layout.fontSizes');
     }
+    const count = fontSizes.length;
+    if (!Number.isSafeInteger(count) || count <= 0 || count > MAX_BANNER_FONT_STEPS) {
+        throw new InvalidOverlayConfigurationError('layout.fontSizes');
+    }
+    const validated = [];
     let previous = Number.POSITIVE_INFINITY;
-    for (const fontSize of fontSizes) {
+    for (let index = 0; index < count; index += 1) {
+        const fontSize = fontSizes[index];
+        if (fontSize === undefined) {
+            throw new InvalidOverlayConfigurationError('layout.fontSizes');
+        }
         if (!Number.isFinite(fontSize) || fontSize <= 0 || fontSize >= previous) {
             throw new InvalidOverlayConfigurationError('layout.fontSizes');
         }
+        validated.push(fontSize);
         previous = fontSize;
     }
-    return [...fontSizes];
+    return validated;
 }
 export function smallestBannerFontSize(fontSizes) {
     const smallest = fontSizes[fontSizes.length - 1];

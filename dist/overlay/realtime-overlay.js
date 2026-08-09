@@ -21,6 +21,7 @@ class RealtimeOverlayEngine {
     ownedRenderers = new Set();
     pending = [];
     active = new Map();
+    cleanupCards = new Map();
     dedupe = new Map();
     counters = {
         received: 0,
@@ -59,13 +60,25 @@ class RealtimeOverlayEngine {
             throw new InvalidOverlayConfigurationError('defaultRenderer');
         }
         this.ownedRenderers.add(this.defaultRenderer);
-        this.registration =
-            options.coordinator === undefined
-                ? null
-                : options.coordinator.register({
+        this.registration = null;
+        if (options.coordinator !== undefined) {
+            try {
+                this.registration = options.coordinator.register({
                     instanceId: options.instanceId,
                     ...this.instanceState,
                 });
+            }
+            catch {
+                try {
+                    this.defaultRenderer.destroy();
+                    this.ownedRenderers.delete(this.defaultRenderer);
+                }
+                catch {
+                    throw new OverlayCleanupError();
+                }
+                throw new InvalidOverlayConfigurationError('coordinator.register');
+            }
+        }
     }
     submit(candidate) {
         this.ensureAlive();
@@ -134,8 +147,22 @@ class RealtimeOverlayEngine {
     }
     updateInstance(update) {
         this.ensureAlive();
-        this.instanceState = mergeInstanceState(this.instanceState, update);
-        this.registration?.update(update);
+        let nextState;
+        try {
+            nextState = mergeInstanceState(this.instanceState, update);
+        }
+        catch (error) {
+            throw normalizeInvalidInstanceStateError(error);
+        }
+        if (this.registration !== null) {
+            try {
+                this.registration.update(nextState);
+            }
+            catch {
+                throw new InvalidOverlayConfigurationError('coordinator.update');
+            }
+        }
+        this.instanceState = nextState;
     }
     getMetrics() {
         return {
@@ -145,33 +172,50 @@ class RealtimeOverlayEngine {
         };
     }
     destroy() {
-        if (this.destroyed) {
+        if (this.destroyed &&
+            this.active.size === 0 &&
+            this.cleanupCards.size === 0 &&
+            this.ownedRenderers.size === 0 &&
+            this.registration === null) {
             return;
         }
         this.destroyed = true;
         let cleanupFailed = false;
-        for (const card of [...this.active.values()]) {
-            if (!this.cleanupCard(card)) {
-                cleanupFailed = true;
+        for (const [cardId, card] of this.active) {
+            card.closing = true;
+            if (this.cleanupCard(card)) {
+                this.active.delete(cardId);
             }
         }
-        this.active.clear();
+        for (const [cardId, card] of this.cleanupCards) {
+            if (this.cleanupCard(card)) {
+                this.cleanupCards.delete(cardId);
+            }
+        }
         this.pending.length = 0;
         this.dedupe.clear();
-        for (const renderer of this.ownedRenderers) {
-            try {
-                renderer.destroy();
-            }
-            catch {
-                cleanupFailed = true;
-            }
-        }
         this.renderers.clear();
-        this.ownedRenderers.clear();
-        try {
-            this.registration?.destroy();
+        if (this.active.size === 0 && this.cleanupCards.size === 0 && !this.draining) {
+            for (const renderer of [...this.ownedRenderers]) {
+                try {
+                    renderer.destroy();
+                    this.ownedRenderers.delete(renderer);
+                }
+                catch {
+                    cleanupFailed = true;
+                }
+            }
+            if (this.registration !== null) {
+                try {
+                    this.registration.destroy();
+                    this.registration = null;
+                }
+                catch {
+                    cleanupFailed = true;
+                }
+            }
         }
-        catch {
+        else if (this.active.size > 0 || this.cleanupCards.size > 0) {
             cleanupFailed = true;
         }
         if (cleanupFailed) {
@@ -215,21 +259,79 @@ class RealtimeOverlayEngine {
         }
         this.draining = true;
         try {
-            while (this.active.size < this.limits.maxVisible && this.pending.length > 0) {
+            if (!this.retryFailedCleanup()) {
+                return;
+            }
+            if (this.destroyed) {
+                return;
+            }
+            let remainingWork = this.pending.length;
+            while (!this.destroyed &&
+                remainingWork > 0 &&
+                this.cleanupCards.size === 0 &&
+                !this.hasClosingCard() &&
+                this.active.size < this.limits.maxVisible &&
+                this.pending.length > 0) {
+                remainingWork -= 1;
                 const event = this.pending.shift();
                 if (event === undefined) {
                     break;
                 }
                 const now = this.now();
+                if (this.destroyed) {
+                    return;
+                }
                 if (now - event.receivedAt > this.limits.maxEventLifetimeMs) {
                     this.removePendingDedupe(event);
                     this.counters.expired += 1;
                     this.emitDiagnostic('overlay-event-expired', 'info');
                     continue;
                 }
-                const grant = this.createGrant(event);
-                if (grant.presentation === 'suppressed') {
-                    grant.destroy();
+                let grant = null;
+                try {
+                    grant = this.createGrant(event);
+                }
+                catch {
+                    if (this.destroyed) {
+                        return;
+                    }
+                    this.removePendingDedupe(event);
+                    this.counters.dropped += 1;
+                    this.reportError(new OverlaySchedulingError());
+                    continue;
+                }
+                if (this.destroyed) {
+                    this.cleanupDetachedCard(event, this.defaultRenderer, null, null, grant);
+                    return;
+                }
+                let presentationCandidate;
+                try {
+                    presentationCandidate = grant.presentation;
+                }
+                catch {
+                    this.cleanupDetachedCard(event, this.defaultRenderer, null, null, grant);
+                    if (this.destroyed) {
+                        return;
+                    }
+                    this.removePendingDedupe(event);
+                    this.counters.dropped += 1;
+                    this.reportError(new OverlaySchedulingError());
+                    continue;
+                }
+                if (this.destroyed) {
+                    this.cleanupDetachedCard(event, this.defaultRenderer, null, null, grant);
+                    return;
+                }
+                if (!isOverlayPresentation(presentationCandidate)) {
+                    this.cleanupDetachedCard(event, this.defaultRenderer, null, null, grant);
+                    this.removePendingDedupe(event);
+                    this.counters.dropped += 1;
+                    this.reportError(new OverlaySchedulingError());
+                    continue;
+                }
+                const presentation = presentationCandidate;
+                if (presentation === 'suppressed') {
+                    this.cleanupDetachedCard(event, this.defaultRenderer, null, null, grant);
                     this.removePendingDedupe(event);
                     this.counters.budgetDenied += 1;
                     this.counters.dropped += 1;
@@ -239,30 +341,48 @@ class RealtimeOverlayEngine {
                 const renderer = this.renderers.get(event.kind) ?? this.defaultRenderer;
                 let renderHandle;
                 try {
-                    renderHandle = renderer.render(event, grant.presentation);
+                    renderHandle = renderer.render(event, presentation);
                 }
                 catch {
-                    grant.destroy();
+                    this.cleanupDetachedCard(event, renderer, null, null, grant);
+                    if (this.destroyed) {
+                        return;
+                    }
                     this.removePendingDedupe(event);
                     this.counters.dropped += 1;
                     this.counters.renderFailed += 1;
                     this.reportError(new OverlayRenderError(event.kind));
                     continue;
                 }
+                if (this.destroyed) {
+                    this.cleanupDetachedCard(event, renderer, null, renderHandle, grant);
+                    return;
+                }
                 const cardId = this.nextCardId;
                 this.nextCardId += 1;
                 let timer;
                 try {
                     timer = this.clock.setTimeout(() => {
+                        const current = this.active.get(cardId);
+                        if (current !== undefined) {
+                            current.timer = null;
+                        }
                         this.finishCard(cardId);
                     }, event.durationMs);
                 }
                 catch {
-                    this.cleanupUnscheduledCard(renderHandle, grant);
+                    this.cleanupDetachedCard(event, renderer, null, renderHandle, grant);
+                    if (this.destroyed) {
+                        return;
+                    }
                     this.removePendingDedupe(event);
                     this.counters.dropped += 1;
                     this.reportError(new OverlaySchedulingError());
                     continue;
+                }
+                if (this.destroyed) {
+                    this.cleanupDetachedCard(event, renderer, timer, renderHandle, grant);
+                    return;
                 }
                 const card = {
                     id: cardId,
@@ -271,31 +391,57 @@ class RealtimeOverlayEngine {
                     grant,
                     timer,
                     renderHandle,
-                    unsubscribeGrant: () => { },
+                    unsubscribeGrant: null,
+                    closing: false,
                 };
                 this.active.set(cardId, card);
                 this.markDisplayed(event, now);
                 this.counters.displayed += 1;
-                if (grant.presentation === 'full') {
+                if (presentation === 'full') {
                     this.counters.fullDisplayed += 1;
                 }
                 else {
                     this.counters.compactDisplayed += 1;
                 }
+                let unsubscribeCandidate;
                 try {
-                    card.unsubscribeGrant = grant.subscribe((presentation) => {
+                    unsubscribeCandidate = grant.subscribe((presentation) => {
                         this.onPresentationChanged(cardId, presentation);
                     });
                 }
                 catch {
+                    if (this.destroyed) {
+                        this.cleanupReturnedCard(cardId, card);
+                        return;
+                    }
                     this.finishCard(cardId);
                     this.counters.dropped += 1;
                     this.reportError(new OverlaySchedulingError());
+                    continue;
+                }
+                if (isUnsubscribe(unsubscribeCandidate)) {
+                    card.unsubscribeGrant = unsubscribeCandidate;
+                }
+                if (this.destroyed) {
+                    this.cleanupReturnedCard(cardId, card);
+                    return;
+                }
+                if (!isUnsubscribe(unsubscribeCandidate)) {
+                    this.finishCard(cardId);
+                    this.counters.dropped += 1;
+                    this.reportError(new OverlaySchedulingError());
+                    continue;
+                }
+                if (this.active.get(cardId) !== card) {
+                    this.cleanupReturnedCard(cardId, card);
                 }
             }
         }
         finally {
             this.draining = false;
+            if (this.destroyed) {
+                this.destroy();
+            }
         }
     }
     createGrant(event) {
@@ -309,7 +455,16 @@ class RealtimeOverlayEngine {
     }
     onPresentationChanged(cardId, presentation) {
         const card = this.active.get(cardId);
-        if (card === undefined || this.destroyed) {
+        if (card === undefined || card.closing || this.destroyed) {
+            return;
+        }
+        if (!isOverlayPresentation(presentation)) {
+            this.finishCard(cardId);
+            this.counters.dropped += 1;
+            this.reportError(new OverlaySchedulingError());
+            return;
+        }
+        if (card.renderHandle === null) {
             return;
         }
         if (presentation === 'suppressed') {
@@ -318,6 +473,7 @@ class RealtimeOverlayEngine {
         }
         try {
             card.renderHandle.destroy();
+            card.renderHandle = null;
             card.renderHandle = card.renderer.render(card.event, presentation);
             this.emitDiagnostic('overlay-presentation-changed', 'debug', { presentation });
         }
@@ -333,57 +489,115 @@ class RealtimeOverlayEngine {
         if (card === undefined) {
             return;
         }
-        this.active.delete(cardId);
-        if (!this.cleanupCard(card)) {
+        card.closing = true;
+        if (this.cleanupCard(card)) {
+            this.active.delete(cardId);
+        }
+        else {
             this.reportError(new OverlayCleanupError());
         }
         this.drain();
     }
     cleanupCard(card) {
         let successful = true;
-        try {
-            this.clock.clearTimeout(card.timer);
+        if (card.timer !== null) {
+            try {
+                this.clock.clearTimeout(card.timer);
+                card.timer = null;
+            }
+            catch {
+                successful = false;
+            }
         }
-        catch {
-            successful = false;
+        if (card.unsubscribeGrant !== null) {
+            try {
+                card.unsubscribeGrant();
+                card.unsubscribeGrant = null;
+            }
+            catch {
+                successful = false;
+            }
         }
-        try {
-            card.unsubscribeGrant();
+        if (card.renderHandle !== null) {
+            try {
+                card.renderHandle.destroy();
+                card.renderHandle = null;
+            }
+            catch {
+                successful = false;
+            }
         }
-        catch {
-            successful = false;
-        }
-        try {
-            card.renderHandle.destroy();
-        }
-        catch {
-            successful = false;
-        }
-        try {
-            card.grant.destroy();
-        }
-        catch {
-            successful = false;
+        if (card.grant !== null) {
+            try {
+                card.grant.destroy();
+                card.grant = null;
+            }
+            catch {
+                successful = false;
+            }
         }
         return successful;
     }
-    cleanupUnscheduledCard(renderHandle, grant) {
-        let cleanupFailed = false;
-        try {
-            renderHandle.destroy();
-        }
-        catch {
-            cleanupFailed = true;
-        }
-        try {
-            grant.destroy();
-        }
-        catch {
-            cleanupFailed = true;
-        }
-        if (cleanupFailed) {
+    cleanupDetachedCard(event, renderer, timer, renderHandle, grant) {
+        const cardId = this.nextCardId;
+        this.nextCardId += 1;
+        const card = {
+            id: cardId,
+            event,
+            renderer,
+            grant,
+            timer,
+            renderHandle,
+            unsubscribeGrant: null,
+            closing: true,
+        };
+        if (!this.cleanupCard(card)) {
+            this.cleanupCards.set(cardId, card);
             this.reportError(new OverlayCleanupError());
         }
+    }
+    cleanupReturnedCard(cardId, card) {
+        card.closing = true;
+        if (this.cleanupCard(card)) {
+            this.active.delete(cardId);
+            this.cleanupCards.delete(cardId);
+            return;
+        }
+        if (this.active.get(cardId) !== card) {
+            this.cleanupCards.set(cardId, card);
+        }
+        this.reportError(new OverlayCleanupError());
+    }
+    retryFailedCleanup() {
+        let successful = true;
+        for (const [cardId, card] of this.cleanupCards) {
+            if (this.cleanupCard(card)) {
+                this.cleanupCards.delete(cardId);
+            }
+            else {
+                successful = false;
+            }
+        }
+        for (const [cardId, card] of this.active) {
+            if (!card.closing) {
+                continue;
+            }
+            if (this.cleanupCard(card)) {
+                this.active.delete(cardId);
+            }
+            else {
+                successful = false;
+            }
+        }
+        return successful;
+    }
+    hasClosingCard() {
+        for (const card of this.active.values()) {
+            if (card.closing) {
+                return true;
+            }
+        }
+        return false;
     }
     expirePending(now) {
         for (let index = this.pending.length - 1; index >= 0; index -= 1) {
@@ -463,4 +677,21 @@ class LocalFullGrant {
         return () => { };
     }
     destroy() { }
+}
+function normalizeInvalidInstanceStateError(error) {
+    try {
+        if (error instanceof InvalidOverlayConfigurationError) {
+            return error;
+        }
+    }
+    catch {
+        return new InvalidOverlayConfigurationError('instanceState');
+    }
+    return new InvalidOverlayConfigurationError('instanceState');
+}
+function isUnsubscribe(value) {
+    return typeof value === 'function';
+}
+function isOverlayPresentation(value) {
+    return value === 'full' || value === 'compact' || value === 'suppressed';
 }

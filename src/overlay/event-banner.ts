@@ -2,7 +2,12 @@ import type { Clock, FrameHandle } from '../shared/clock.js'
 import { createSystemClock } from '../shared/clock.js'
 import type { Destroyable } from '../shared/disposable.js'
 import { AssetResolutionError } from '../shared/errors.js'
-import { InvalidOverlayConfigurationError, OverlayDestroyedError } from './errors.js'
+import {
+  InvalidOverlayConfigurationError,
+  InvalidOverlayEventError,
+  OverlayCleanupError,
+  OverlayDestroyedError,
+} from './errors.js'
 import {
   fitBannerText,
   normalizeBannerText,
@@ -13,6 +18,7 @@ import type {
   BannerContent,
   BannerElement,
   BannerFont,
+  BannerImageElement,
   BannerLayout,
   EventBannerLimits,
   EventBannerPresenter,
@@ -64,8 +70,10 @@ interface ResolvedBannerContent {
 
 interface ActiveBanner {
   readonly root: BannerElement
-  readonly text: BannerElement
+  image: BannerImageElement | null
   frame: FrameHandle | null
+  imageRemoved: boolean
+  removed: boolean
 }
 
 export function createEventBannerPresenter(
@@ -118,29 +126,46 @@ export function createEventBannerPresenter(
       return active.size
     },
     destroy(): void {
-      if (destroyed) {
+      if (destroyed && active.size === 0) {
         return
       }
       destroyed = true
+      let cleanupFailed = false
       for (const banner of [...active]) {
-        release(banner)
+        try {
+          release(banner)
+        } catch {
+          cleanupFailed = true
+        }
+      }
+      if (cleanupFailed) {
+        throw new OverlayCleanupError()
       }
     },
   }
 
   function mount(banner: ActiveBanner): Destroyable {
-    while (active.size >= maxActiveBanners) {
-      const oldest = active.values().next().value
-      if (oldest === undefined) {
-        break
+    try {
+      while (active.size >= maxActiveBanners) {
+        const oldest = active.values().next().value
+        if (oldest === undefined) {
+          break
+        }
+        release(oldest)
       }
-      release(oldest)
+    } catch (error) {
+      rollbackUnownedBanner(banner, error)
     }
 
-    prepareEntryMotion(banner)
     active.add(banner)
-    surface.mount(banner.root)
-    startEntryMotion(banner)
+    try {
+      prepareEntryMotion(banner)
+      surface.mount(banner.root)
+      startEntryMotion(banner)
+    } catch (error) {
+      release(banner)
+      throw error
+    }
 
     let released = false
     return {
@@ -148,19 +173,53 @@ export function createEventBannerPresenter(
         if (released) {
           return
         }
-        released = true
         release(banner)
+        released = true
       },
     }
   }
 
+  function rollbackUnownedBanner(banner: ActiveBanner, error: unknown): never {
+    active.add(banner)
+    try {
+      release(banner)
+    } catch {
+      destroyed = true
+      throw new OverlayCleanupError()
+    }
+    throw error
+  }
+
   function release(banner: ActiveBanner): void {
+    let cleanupFailed = false
     if (banner.frame !== null) {
-      clock.cancelFrame(banner.frame)
-      banner.frame = null
+      try {
+        clock.cancelFrame(banner.frame)
+        banner.frame = null
+      } catch {
+        cleanupFailed = true
+      }
+    }
+    if (banner.image !== null && !banner.imageRemoved) {
+      try {
+        banner.image.remove()
+        banner.imageRemoved = true
+      } catch {
+        cleanupFailed = true
+      }
+    }
+    if (!banner.removed) {
+      try {
+        banner.root.remove()
+        banner.removed = true
+      } catch {
+        cleanupFailed = true
+      }
+    }
+    if (cleanupFailed) {
+      throw new OverlayCleanupError()
     }
     active.delete(banner)
-    banner.root.remove()
   }
 
   function prepareEntryMotion(banner: ActiveBanner): void {
@@ -196,86 +255,114 @@ export function createEventBannerPresenter(
     assetKey: string,
     assetUrl: string,
   ): ActiveBanner {
-    const root = surface.createElement('root')
-    applyRootAttributes(root, model, 'full')
-    applySharedRootStyle(root, layout)
-    root.setStyle('width', `min(${String(layout.maxWidthPercent)}%, ${String(layout.width)}px)`)
-    root.setStyle('aspect-ratio', `${String(layout.width)} / ${String(layout.height)}`)
-    root.setStyle('container-type', 'inline-size')
-    root.setStyle('overflow', 'hidden')
-
-    const image = surface.createImage()
-    image.setSource(assetUrl)
-    image.setAttribute('alt', model.assetAlt ?? '')
-    if (model.assetAlt === null) {
-      image.setAttribute('aria-hidden', 'true')
-    }
-    image.setAttribute('draggable', 'false')
-    image.setAttribute('decoding', 'async')
-    image.setStyle('position', 'absolute')
-    image.setStyle('inset', '0')
-    image.setStyle('width', '100%')
-    image.setStyle('height', '100%')
-    image.setStyle('object-fit', 'fill')
-    image.setStyle('pointer-events', 'none')
-    root.append(image)
-
     const fit = fitBannerText(model.text, layout.maxTextWidth, layout.fontSizes, measure)
-    const text = surface.createElement('text')
-    text.setAttribute(TEXT_ATTRIBUTE, '')
-    text.setText(fit.text)
-    if (fit.truncated) {
-      text.setAttribute('title', model.text)
+    const root = surface.createElement('root')
+    const banner: ActiveBanner = {
+      root,
+      image: null,
+      frame: null,
+      imageRemoved: true,
+      removed: false,
     }
-    applySharedTextStyle(text, layout)
-    text.setStyle('position', 'absolute')
-    text.setStyle('z-index', '1')
-    text.setStyle('top', percent(layout.textTop, layout.height))
-    text.setStyle('left', percent(layout.textLeft, layout.width))
-    text.setStyle('width', percent(layout.maxTextWidth, layout.width))
-    text.setStyle('font-size', containerWidth(fit.fontSize, layout.width))
-    text.setStyle('line-height', '1.25')
-    if (layout.outlineColor !== null) {
-      text.setStyle(
-        '-webkit-text-stroke',
-        `${containerWidth(layout.outlineWidth, layout.width)} ${layout.outlineColor}`,
-      )
-      text.setStyle('paint-order', 'stroke fill')
-    }
-    text.setStyle(
-      'text-shadow',
-      `0 ${containerWidth(SHADOW_OFFSET, layout.width)} ${containerWidth(
-        SHADOW_BLUR,
-        layout.width,
-      )} rgb(0 0 0 / 28%)`,
-    )
-    root.append(text)
+    try {
+      applyRootAttributes(root, model, 'full')
+      applySharedRootStyle(root, layout)
+      root.setStyle('width', `min(${String(layout.maxWidthPercent)}%, ${String(layout.width)}px)`)
+      root.setStyle('aspect-ratio', `${String(layout.width)} / ${String(layout.height)}`)
+      root.setStyle('container-type', 'inline-size')
+      root.setStyle('overflow', 'hidden')
 
-    const banner: ActiveBanner = { root, text, frame: null }
-    image.onLoadError(() => {
-      if (!active.has(banner)) {
-        return
+      const image = surface.createImage()
+      banner.image = image
+      banner.imageRemoved = false
+      image.setSource(assetUrl)
+      image.setAttribute('alt', model.assetAlt ?? '')
+      if (model.assetAlt === null) {
+        image.setAttribute('aria-hidden', 'true')
       }
-      image.remove()
-      applyCompactRootStyle(root, layout)
-      applyCompactTextStyle(text, layout)
-      root.setAttribute(BANNER_ATTRIBUTE, 'compact')
-      reportAssetError(assetKey)
-    })
+      image.setAttribute('draggable', 'false')
+      image.setAttribute('decoding', 'async')
+      image.setStyle('position', 'absolute')
+      image.setStyle('inset', '0')
+      image.setStyle('width', '100%')
+      image.setStyle('height', '100%')
+      image.setStyle('object-fit', 'fill')
+      image.setStyle('pointer-events', 'none')
+      root.append(image)
+
+      const text = surface.createElement('text')
+      text.setAttribute(TEXT_ATTRIBUTE, '')
+      text.setText(fit.text)
+      if (fit.truncated) {
+        text.setAttribute('title', model.text)
+      }
+      applySharedTextStyle(text, layout)
+      text.setStyle('position', 'absolute')
+      text.setStyle('z-index', '1')
+      text.setStyle('top', percent(layout.textTop, layout.height))
+      text.setStyle('left', percent(layout.textLeft, layout.width))
+      text.setStyle('width', percent(layout.maxTextWidth, layout.width))
+      text.setStyle('font-size', containerWidth(fit.fontSize, layout.width))
+      text.setStyle('line-height', '1.25')
+      if (layout.outlineColor !== null) {
+        text.setStyle(
+          '-webkit-text-stroke',
+          `${containerWidth(layout.outlineWidth, layout.width)} ${layout.outlineColor}`,
+        )
+        text.setStyle('paint-order', 'stroke fill')
+      }
+      text.setStyle(
+        'text-shadow',
+        `0 ${containerWidth(SHADOW_OFFSET, layout.width)} ${containerWidth(
+          SHADOW_BLUR,
+          layout.width,
+        )} rgb(0 0 0 / 28%)`,
+      )
+      root.append(text)
+
+      image.onLoadError(() => {
+        if (!active.has(banner)) {
+          return
+        }
+        try {
+          image.remove()
+          banner.imageRemoved = true
+        } catch {
+          banner.imageRemoved = false
+        }
+        applyCompactRootStyle(root, layout)
+        applyCompactTextStyle(text, layout)
+        root.setAttribute(BANNER_ATTRIBUTE, 'compact')
+        reportAssetError(assetKey)
+      })
+    } catch (error) {
+      rollbackUnownedBanner(banner, error)
+    }
     return banner
   }
 
   function createCompactBanner(model: ResolvedBannerContent): ActiveBanner {
     const root = surface.createElement('root')
-    applyRootAttributes(root, model, 'compact')
-    applyCompactRootStyle(root, layout)
+    const banner: ActiveBanner = {
+      root,
+      image: null,
+      frame: null,
+      imageRemoved: true,
+      removed: false,
+    }
+    try {
+      applyRootAttributes(root, model, 'compact')
+      applyCompactRootStyle(root, layout)
 
-    const text = surface.createElement('text')
-    text.setAttribute(TEXT_ATTRIBUTE, '')
-    text.setText(model.text)
-    applyCompactTextStyle(text, layout)
-    root.append(text)
-    return { root, text, frame: null }
+      const text = surface.createElement('text')
+      text.setAttribute(TEXT_ATTRIBUTE, '')
+      text.setText(model.text)
+      applyCompactTextStyle(text, layout)
+      root.append(text)
+    } catch (error) {
+      rollbackUnownedBanner(banner, error)
+    }
+    return banner
   }
 
   function resolveAssetUrl(assetKey: string): string | null {
@@ -375,20 +462,43 @@ function applyCompactTextStyle(text: BannerElement, layout: ResolvedBannerLayout
 }
 
 function resolveContent(content: BannerContent, maxTextLength: number): ResolvedBannerContent {
-  const text = normalizeBannerText(content.text, maxTextLength, 'content.text')
+  try {
+    return resolveContentValue(content, maxTextLength)
+  } catch (error) {
+    throw normalizeInvalidBannerContentError(error)
+  }
+}
+
+function resolveContentValue(content: BannerContent, maxTextLength: number): ResolvedBannerContent {
+  const textValue = content.text
+  const labelValue = content.label
+  const assetKeyValue = content.assetKey
+  const assetAltValue = content.assetAlt
+  const text = normalizeBannerText(textValue, maxTextLength, 'content.text')
   const label =
-    content.label === undefined
+    labelValue === undefined
       ? text
-      : normalizeBannerText(content.label, maxTextLength, 'content.label')
+      : normalizeBannerText(labelValue, maxTextLength, 'content.label')
   const assetKey =
-    content.assetKey === undefined
+    assetKeyValue === undefined
       ? null
-      : normalizeBannerText(content.assetKey, MAX_ASSET_KEY_LENGTH, 'content.assetKey')
+      : normalizeBannerText(assetKeyValue, MAX_ASSET_KEY_LENGTH, 'content.assetKey')
   const assetAlt =
-    content.assetAlt === undefined
+    assetAltValue === undefined
       ? null
-      : normalizeBannerText(content.assetAlt, maxTextLength, 'content.assetAlt')
+      : normalizeBannerText(assetAltValue, maxTextLength, 'content.assetAlt')
   return { text, label, assetKey, assetAlt }
+}
+
+function normalizeInvalidBannerContentError(error: unknown): InvalidOverlayEventError {
+  try {
+    if (error instanceof InvalidOverlayEventError) {
+      return error
+    }
+  } catch {
+    return new InvalidOverlayEventError('content')
+  }
+  return new InvalidOverlayEventError('content')
 }
 
 function resolveLayout(layout: BannerLayout): ResolvedBannerLayout {

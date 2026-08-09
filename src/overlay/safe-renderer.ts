@@ -32,8 +32,8 @@ export function createSafeOverlayRenderer(
           if (destroyed) {
             return
           }
-          destroyed = true
           root.remove()
+          destroyed = true
         },
       }
     },

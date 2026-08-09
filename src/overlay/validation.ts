@@ -97,6 +97,18 @@ export function parseOverlayEvent(
   limits: OverlayLimits,
   now: number,
 ): RealtimeOverlayEvent {
+  try {
+    return parseOverlayEventValue(candidate, limits, now)
+  } catch (error) {
+    throw normalizeInvalidOverlayEventError(error)
+  }
+}
+
+function parseOverlayEventValue(
+  candidate: unknown,
+  limits: OverlayLimits,
+  now: number,
+): RealtimeOverlayEvent {
   if (!isRecord(candidate)) {
     throw new InvalidOverlayEventError('event')
   }
@@ -114,14 +126,17 @@ export function parseOverlayEvent(
   }
 
   const rawNodes = Reflect.get(candidate, 'nodes')
-  if (
-    !Array.isArray(rawNodes) ||
-    rawNodes.length === 0 ||
-    rawNodes.length > limits.maxNodesPerEvent
-  ) {
+  if (!Array.isArray(rawNodes)) {
     throw new InvalidOverlayEventError('nodes')
   }
-  const nodes = rawNodes.map((node, index) => parseNode(node, index, limits))
+  const nodeCount = rawNodes.length
+  if (!Number.isSafeInteger(nodeCount) || nodeCount <= 0 || nodeCount > limits.maxNodesPerEvent) {
+    throw new InvalidOverlayEventError('nodes')
+  }
+  const nodes: OverlayNode[] = []
+  for (let index = 0; index < nodeCount; index += 1) {
+    nodes.push(parseNode(rawNodes[index], index, limits))
+  }
 
   const dedupeCandidate = Reflect.get(candidate, 'dedupeKey')
   if (dedupeCandidate === undefined) {
@@ -254,6 +269,17 @@ function validatePositiveFinite(field: string, value: number): void {
   if (!Number.isFinite(value) || value <= 0) {
     throw new InvalidOverlayConfigurationError(field)
   }
+}
+
+function normalizeInvalidOverlayEventError(error: unknown): InvalidOverlayEventError {
+  try {
+    if (error instanceof InvalidOverlayEventError) {
+      return error
+    }
+  } catch {
+    return new InvalidOverlayEventError('event')
+  }
+  return new InvalidOverlayEventError('event')
 }
 
 function validateBoundedText(

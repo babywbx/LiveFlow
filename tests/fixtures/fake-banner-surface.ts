@@ -18,6 +18,9 @@ export class FakeBannerElement implements BannerImageElement {
   source: string | null = null
   mounted = false
   removed = false
+  removeCallCount = 0
+  private loadErrorBindingFailures = 0
+  private removeFailures = 0
   private readonly loadErrorListeners: (() => void)[] = []
 
   constructor(kind: FakeBannerElementKind) {
@@ -45,6 +48,11 @@ export class FakeBannerElement implements BannerImageElement {
   }
 
   remove(): void {
+    this.removeCallCount += 1
+    if (this.removeFailures > 0) {
+      this.removeFailures -= 1
+      throw new Error('banner removal failed')
+    }
     this.removed = true
     this.loadErrorListeners.length = 0
     const parent = this.parent
@@ -69,6 +77,10 @@ export class FakeBannerElement implements BannerImageElement {
   }
 
   onLoadError(listener: () => void): void {
+    if (this.loadErrorBindingFailures > 0) {
+      this.loadErrorBindingFailures -= 1
+      throw new Error('banner load error binding failed')
+    }
     this.loadErrorListeners.push(listener)
   }
 
@@ -76,6 +88,14 @@ export class FakeBannerElement implements BannerImageElement {
     for (const listener of this.loadErrorListeners.splice(0)) {
       listener()
     }
+  }
+
+  failNextRemove(): void {
+    this.removeFailures += 1
+  }
+
+  failNextLoadErrorBinding(): void {
+    this.loadErrorBindingFailures += 1
   }
 
   descendants(): FakeBannerElement[] {
@@ -98,9 +118,12 @@ export interface FakeBannerSurfaceOptions {
 
 export class FakeBannerSurface implements BannerSurface {
   readonly baseUrl: string
+  readonly images: FakeBannerElement[] = []
   readonly roots: FakeBannerElement[] = []
   readonly measurements: { text: string; fontSize: number; font: BannerFont }[] = []
   private readonly widthPerFontUnit: number
+  private nextImageLoadErrorBindingFailures = 0
+  private nextImageRemoveFailures = 0
 
   constructor(options: FakeBannerSurfaceOptions = {}) {
     this.baseUrl = options.baseUrl ?? 'https://example.test/watch/'
@@ -112,7 +135,25 @@ export class FakeBannerSurface implements BannerSurface {
   }
 
   createImage(): BannerImageElement {
-    return new FakeBannerElement('image')
+    const image = new FakeBannerElement('image')
+    if (this.nextImageLoadErrorBindingFailures > 0) {
+      this.nextImageLoadErrorBindingFailures -= 1
+      image.failNextLoadErrorBinding()
+    }
+    if (this.nextImageRemoveFailures > 0) {
+      this.nextImageRemoveFailures -= 1
+      image.failNextRemove()
+    }
+    this.images.push(image)
+    return image
+  }
+
+  failNextCreatedImageLoadErrorBinding(): void {
+    this.nextImageLoadErrorBindingFailures += 1
+  }
+
+  failNextCreatedImageRemove(): void {
+    this.nextImageRemoveFailures += 1
   }
 
   mount(element: BannerElement): void {

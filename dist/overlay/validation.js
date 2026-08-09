@@ -72,6 +72,14 @@ export function validateRendererKind(kind, maxLength) {
     validateBoundedText(kind, 'kind', maxLength, InvalidOverlayConfigurationError);
 }
 export function parseOverlayEvent(candidate, limits, now) {
+    try {
+        return parseOverlayEventValue(candidate, limits, now);
+    }
+    catch (error) {
+        throw normalizeInvalidOverlayEventError(error);
+    }
+}
+function parseOverlayEventValue(candidate, limits, now) {
     if (!isRecord(candidate)) {
         throw new InvalidOverlayEventError('event');
     }
@@ -87,12 +95,17 @@ export function parseOverlayEvent(candidate, limits, now) {
         throw new InvalidOverlayEventError('durationMs');
     }
     const rawNodes = Reflect.get(candidate, 'nodes');
-    if (!Array.isArray(rawNodes) ||
-        rawNodes.length === 0 ||
-        rawNodes.length > limits.maxNodesPerEvent) {
+    if (!Array.isArray(rawNodes)) {
         throw new InvalidOverlayEventError('nodes');
     }
-    const nodes = rawNodes.map((node, index) => parseNode(node, index, limits));
+    const nodeCount = rawNodes.length;
+    if (!Number.isSafeInteger(nodeCount) || nodeCount <= 0 || nodeCount > limits.maxNodesPerEvent) {
+        throw new InvalidOverlayEventError('nodes');
+    }
+    const nodes = [];
+    for (let index = 0; index < nodeCount; index += 1) {
+        nodes.push(parseNode(rawNodes[index], index, limits));
+    }
     const dedupeCandidate = Reflect.get(candidate, 'dedupeKey');
     if (dedupeCandidate === undefined) {
         return { id, kind, receivedAt, priority, durationMs, nodes };
@@ -201,6 +214,17 @@ function validatePositiveFinite(field, value) {
     if (!Number.isFinite(value) || value <= 0) {
         throw new InvalidOverlayConfigurationError(field);
     }
+}
+function normalizeInvalidOverlayEventError(error) {
+    try {
+        if (error instanceof InvalidOverlayEventError) {
+            return error;
+        }
+    }
+    catch {
+        return new InvalidOverlayEventError('event');
+    }
+    return new InvalidOverlayEventError('event');
 }
 function validateBoundedText(value, field, maxLength, ErrorConstructor) {
     if (value.length === 0 || value.length > maxLength) {

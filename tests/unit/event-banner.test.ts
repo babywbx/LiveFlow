@@ -5,8 +5,10 @@ import type { BannerLayout, EventBannerPresenter } from '../../src/overlay/banne
 import {
   InvalidOverlayConfigurationError,
   InvalidOverlayEventError,
+  OverlayCleanupError,
   OverlayDestroyedError,
 } from '../../src/overlay/index.js'
+import type { FrameHandle } from '../../src/shared/clock.js'
 import { FakeBannerSurface } from '../fixtures/fake-banner-surface.js'
 import { FakeClock } from '../fixtures/fake-clock.js'
 
@@ -18,6 +20,30 @@ const LAYOUT: BannerLayout = {
   maxTextWidth: 510,
   fontSizes: [28, 26, 24, 22],
   fontFamily: 'system-ui',
+}
+
+class FailingFrameClock extends FakeClock {
+  override requestFrame(): FrameHandle {
+    throw new Error('frame scheduling failed')
+  }
+}
+
+class FlakyFrameClock extends FakeClock {
+  private cancelFailures = 1
+
+  override cancelFrame(handle: FrameHandle): void {
+    if (this.cancelFailures > 0) {
+      this.cancelFailures -= 1
+      throw new Error('frame cancellation failed')
+    }
+    super.cancelFrame(handle)
+  }
+}
+
+class FailingMeasureSurface extends FakeBannerSurface {
+  override measureText(): never {
+    throw new Error('measurement failed')
+  }
 }
 
 function createPresenter(
@@ -160,6 +186,40 @@ describe('event banner presenter', () => {
     presenter.destroy()
   })
 
+  it('validates font sizes without calling a custom iterator', () => {
+    const surface = new FakeBannerSurface()
+    const fontSizes = [28, 26, 24, 22]
+    let iteratorCalls = 0
+    Object.defineProperty(fontSizes, Symbol.iterator, {
+      value(): never {
+        iteratorCalls += 1
+        throw new Error('custom iterator called')
+      },
+    })
+
+    const presenter = createPresenter(surface, { layout: { ...LAYOUT, fontSizes } })
+    presenter.present({ text: 'bounded font ladder' }, 'compact')
+
+    expect(iteratorCalls).toBe(0)
+    presenter.destroy()
+  })
+
+  it('rejects oversized raw text before measuring or mounting it', () => {
+    const surface = new FakeBannerSurface()
+    const presenter = createPresenter(surface, {
+      assetResolver: { resolve: (): string => 'https://assets.example/banner.png' },
+      maxTextLength: 4,
+    })
+
+    expect(() => {
+      presenter.present({ text: 'ok   ', assetKey: 'banner-artwork' }, 'full')
+    }).toThrow(InvalidOverlayEventError)
+    expect(surface.measurements).toHaveLength(0)
+    expect(surface.mountedRoots()).toHaveLength(0)
+    expect(presenter.activeCount()).toBe(0)
+    presenter.destroy()
+  })
+
   it('releases a single banner through its handle without touching the others', () => {
     const surface = new FakeBannerSurface()
     const presenter = createPresenter(surface, { maxActiveBanners: 4 })
@@ -230,6 +290,191 @@ describe('event banner presenter', () => {
 
     expect(clock.pendingTaskCount()).toBe(0)
     expect(surface.mountedRoots()).toHaveLength(0)
+  })
+
+  it('rolls back a partially mounted banner when frame scheduling fails', () => {
+    const surface = new FakeBannerSurface()
+    const presenter = createPresenter(surface, {
+      clock: new FailingFrameClock(),
+      reducedMotion: false,
+    })
+
+    expect(() => {
+      presenter.present({ text: 'failing mount' }, 'compact')
+    }).toThrow('frame scheduling failed')
+    expect(presenter.activeCount()).toBe(0)
+    expect(surface.mountedRoots()).toHaveLength(0)
+    presenter.destroy()
+  })
+
+  it('retries a failed release after attempting every cleanup step', () => {
+    const clock = new FlakyFrameClock()
+    const surface = new FakeBannerSurface()
+    const presenter = createPresenter(surface, { clock, reducedMotion: false })
+    const handle = presenter.present({ text: 'retry cleanup' }, 'compact')
+    const root = surface.lastRoot()
+
+    expect(() => handle.destroy()).toThrow(OverlayCleanupError)
+    expect(surface.mountedRoots()).toHaveLength(0)
+    expect(clock.pendingTaskCount()).toBe(1)
+    expect(root.removeCallCount).toBe(1)
+
+    expect(() => handle.destroy()).not.toThrow()
+    expect(clock.pendingTaskCount()).toBe(0)
+    expect(root.removeCallCount).toBe(1)
+    presenter.destroy()
+  })
+
+  it('removes image resources and their error listener on release', () => {
+    const surface = new FakeBannerSurface()
+    const onAssetError = vi.fn()
+    const presenter = createPresenter(surface, {
+      assetResolver: { resolve: (): string => 'https://assets.example/banner.png' },
+      onAssetError,
+    })
+    const handle = presenter.present({ text: 'image cleanup', assetKey: 'artwork' }, 'full')
+    const image = surface.images[0]
+    if (image === undefined) {
+      throw new Error('Missing banner image.')
+    }
+
+    handle.destroy()
+    image.triggerLoadError()
+
+    expect(image.removed).toBe(true)
+    expect(onAssetError).not.toHaveBeenCalled()
+    presenter.destroy()
+  })
+
+  it('retries image removal without repeating root removal', () => {
+    const surface = new FakeBannerSurface()
+    const presenter = createPresenter(surface, {
+      assetResolver: { resolve: (): string => 'https://assets.example/banner.png' },
+    })
+    const handle = presenter.present({ text: 'retry image', assetKey: 'artwork' }, 'full')
+    const root = surface.lastRoot()
+    const image = surface.images[0]
+    if (image === undefined) {
+      throw new Error('Missing banner image.')
+    }
+    image.failNextRemove()
+
+    expect(() => handle.destroy()).toThrow(OverlayCleanupError)
+    expect(root.removeCallCount).toBe(1)
+    expect(image.removed).toBe(false)
+
+    expect(() => handle.destroy()).not.toThrow()
+    expect(root.removeCallCount).toBe(1)
+    expect(image.removed).toBe(true)
+    presenter.destroy()
+  })
+
+  it('does not create an image before text measurement succeeds', () => {
+    const surface = new FailingMeasureSurface()
+    const presenter = createPresenter(surface, {
+      assetResolver: { resolve: (): string => 'https://assets.example/banner.png' },
+    })
+
+    expect(() => presenter.present({ text: 'measure first', assetKey: 'artwork' }, 'full')).toThrow(
+      'measurement failed',
+    )
+    expect(surface.images).toHaveLength(0)
+    expect(presenter.activeCount()).toBe(0)
+    presenter.destroy()
+  })
+
+  it('retains a new banner when eviction and rollback cleanup both fail', () => {
+    const surface = new FakeBannerSurface()
+    const presenter = createPresenter(surface, {
+      maxActiveBanners: 1,
+      assetResolver: { resolve: (): string => 'https://assets.example/banner.png' },
+    })
+    presenter.present({ text: 'first', assetKey: 'first-artwork' }, 'full')
+    const firstImage = surface.images[0]
+    if (firstImage === undefined) {
+      throw new Error('Missing first banner image.')
+    }
+    firstImage.failNextRemove()
+    surface.failNextCreatedImageRemove()
+
+    expect(() => presenter.present({ text: 'second', assetKey: 'second-artwork' }, 'full')).toThrow(
+      OverlayCleanupError,
+    )
+    const secondImage = surface.images[1]
+    if (secondImage === undefined) {
+      throw new Error('Missing second banner image.')
+    }
+    expect(presenter.activeCount()).toBe(2)
+    expect(firstImage.removed).toBe(false)
+    expect(secondImage.removed).toBe(false)
+    expect(() => presenter.present({ text: 'late' }, 'compact')).toThrow(OverlayDestroyedError)
+
+    expect(() => presenter.destroy()).not.toThrow()
+    expect(presenter.activeCount()).toBe(0)
+    expect(firstImage.removed).toBe(true)
+    expect(secondImage.removed).toBe(true)
+  })
+
+  it('retains image ownership when banner construction rollback fails', () => {
+    const surface = new FakeBannerSurface()
+    surface.failNextCreatedImageLoadErrorBinding()
+    surface.failNextCreatedImageRemove()
+    const presenter = createPresenter(surface, {
+      assetResolver: { resolve: (): string => 'https://assets.example/banner.png' },
+    })
+
+    expect(() => presenter.present({ text: 'binding', assetKey: 'artwork' }, 'full')).toThrow(
+      OverlayCleanupError,
+    )
+    const image = surface.images[0]
+    if (image === undefined) {
+      throw new Error('Missing banner image.')
+    }
+    expect(presenter.activeCount()).toBe(1)
+    expect(image.removed).toBe(false)
+    expect(() => presenter.present({ text: 'late' }, 'compact')).toThrow(OverlayDestroyedError)
+
+    expect(() => presenter.destroy()).not.toThrow()
+    expect(presenter.activeCount()).toBe(0)
+    expect(image.removed).toBe(true)
+  })
+
+  it('wraps hostile content getters without exposing their error', () => {
+    const presenter = createPresenter(new FakeBannerSurface())
+    const content = { text: 'safe' }
+    Object.defineProperty(content, 'text', {
+      get(): never {
+        throw new Error('https://assets.example/banner.png?token=secret')
+      },
+    })
+
+    expect(() => presenter.present(content, 'compact')).toThrow(InvalidOverlayEventError)
+    try {
+      presenter.present(content, 'compact')
+    } catch (error) {
+      expect(String(error)).not.toContain('secret')
+    }
+    expect(presenter.activeCount()).toBe(0)
+    presenter.destroy()
+  })
+
+  it('attempts every banner cleanup before reporting destroy failure', () => {
+    const surface = new FakeBannerSurface()
+    const presenter = createPresenter(surface)
+    const first = presenter.present({ text: 'first' }, 'compact')
+    const firstRoot = surface.lastRoot()
+    presenter.present({ text: 'second' }, 'compact')
+    firstRoot.failNextRemove()
+
+    expect(() => presenter.destroy()).toThrow(OverlayCleanupError)
+    expect(presenter.activeCount()).toBe(1)
+    expect(surface.mountedRoots()).toEqual([firstRoot])
+
+    expect(() => presenter.destroy()).not.toThrow()
+    expect(presenter.activeCount()).toBe(0)
+    expect(surface.mountedRoots()).toHaveLength(0)
+    expect(() => first.destroy()).not.toThrow()
+    expect(() => presenter.destroy()).not.toThrow()
   })
 
   it('reports an asset error when the resolver throws or is missing', () => {

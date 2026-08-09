@@ -18,8 +18,8 @@ export function createSafeOverlayRenderer(container, options = {}) {
                     if (destroyed) {
                         return;
                     }
-                    destroyed = true;
                     root.remove();
+                    destroyed = true;
                 },
             };
         },
