@@ -18,7 +18,6 @@ export interface NativeVideoAdapterOptions extends EngineHooks {
 
 export interface NativeVideoSourceBinding {
   attach(video: VideoElementLike, source: LiveSource): void
-  // Must be idempotent: called for videos that never attached.
   detach(video: VideoElementLike): void
 }
 
@@ -31,6 +30,9 @@ export interface NativeVideoSurface {
 
 interface NativeResource {
   readonly video: VideoElementLike
+  bindingDetached: boolean
+  mediaCleaned: boolean
+  removed: boolean
   removeOnRelease: boolean
 }
 
@@ -42,39 +44,28 @@ export function createNativeVideoAdapter(options: NativeVideoAdapterOptions): Li
   const driver: MediaResourceDriver<NativeResource> = {
     initialResource: {
       video: options.video,
+      bindingDetached: options.binding === undefined,
+      mediaCleaned: false,
+      removed: false,
       removeOnRelease: false,
     },
     create(_source: LiveSource, _generation: number): Promise<NativeResource> {
       const video = surface.createVideo()
-      try {
-        surface.stage(video)
-      } catch {
-        let cleanupFailed = false
-        try {
-          cleanupVideo(video)
-        } catch {
-          cleanupFailed = true
-        }
-        try {
-          surface.remove(video)
-        } catch {
-          cleanupFailed = true
-        }
-        throw new PlayerAdapterError(
-          cleanupFailed ? 'native-video-stage-cleanup-failed' : 'native-video-stage-failed',
-          'stage a video',
-        )
-      }
       return Promise.resolve({
         video,
+        bindingDetached: true,
+        mediaCleaned: false,
+        removed: false,
         removeOnRelease: true,
       })
     },
     activate(resource: NativeResource, source: LiveSource): void {
+      surface.stage(resource.video)
       if (options.crossOrigin !== undefined) {
         resource.video.crossOrigin = options.crossOrigin
       }
       if (options.binding !== undefined) {
+        resource.bindingDetached = false
         options.binding.attach(resource.video, source)
         return
       }
@@ -94,24 +85,33 @@ export function createNativeVideoAdapter(options: NativeVideoAdapterOptions): Li
     },
     release(resource: NativeResource): void {
       let cleanupFailed = false
-      if (options.binding !== undefined) {
+      if (!resource.bindingDetached && options.binding !== undefined) {
         try {
           options.binding.detach(resource.video)
+          resource.bindingDetached = true
+        } catch {
+          cleanupFailed = true
+        }
+      } else if (options.binding === undefined) {
+        resource.bindingDetached = true
+      }
+      if (!resource.mediaCleaned) {
+        try {
+          cleanupVideo(resource.video)
+          resource.mediaCleaned = true
         } catch {
           cleanupFailed = true
         }
       }
-      try {
-        cleanupVideo(resource.video)
-      } catch {
-        cleanupFailed = true
-      }
-      try {
-        if (resource.removeOnRelease) {
+      if (!resource.removeOnRelease) {
+        resource.removed = true
+      } else if (!resource.removed) {
+        try {
           surface.remove(resource.video)
+          resource.removed = true
+        } catch {
+          cleanupFailed = true
         }
-      } catch {
-        cleanupFailed = true
       }
       if (cleanupFailed) {
         throw new PlayerAdapterError('native-video-cleanup-failed', 'release a video')
@@ -126,6 +126,7 @@ function subscribeToVideo(
   video: VideoElementLike,
   listener: (event: ResourceEvent) => void,
 ): () => void {
+  const readyAtSubscription = video.readyState >= 2
   const ready = (): void => {
     listener({ type: 'ready' })
   }
@@ -175,7 +176,7 @@ function subscribeToVideo(
     }
     throw new PlayerAdapterError('native-video-subscribe-failed', 'subscribe to video events')
   }
-  if (video.readyState >= 2) {
+  if (readyAtSubscription) {
     ready()
   }
 

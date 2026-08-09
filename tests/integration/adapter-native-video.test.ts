@@ -6,7 +6,9 @@ import {
   type NativeVideoSurface,
   type VideoElementLike,
 } from '../../src/adapters/native-video.js'
+import { createContinuityController } from '../../src/continuity/index.js'
 import type { PlaybackEvent } from '../../src/continuity/index.js'
+import { CONTRACT_VERSION } from '../../src/index.js'
 
 class SyntheticTimeRanges {
   constructor(private readonly ranges: readonly (readonly [number, number])[]) {}
@@ -41,6 +43,7 @@ class SyntheticVideo implements VideoElementLike {
   failMutedWrites = false
   failFrameCancellation = false
   failListenerRemoval = false
+  playFailureName: string | null = null
   volume = 1
   paused = true
   ended = false
@@ -89,6 +92,11 @@ class SyntheticVideo implements VideoElementLike {
   }
 
   async play(): Promise<void> {
+    if (this.playFailureName !== null) {
+      const error = new Error('Synthetic playback failure.')
+      error.name = this.playFailureName
+      throw error
+    }
     this.paused = false
   }
 
@@ -148,6 +156,8 @@ class SyntheticSurface implements NativeVideoSurface {
   readonly created: SyntheticVideo[] = []
   readonly mounted = new Set<VideoElementLike>()
   visible: VideoElementLike
+  failRemoveOnceFor: VideoElementLike | null = null
+  candidatePlayFailureName: string | null = null
 
   constructor(initial: SyntheticVideo) {
     this.visible = initial
@@ -156,6 +166,7 @@ class SyntheticSurface implements NativeVideoSurface {
 
   createVideo(): VideoElementLike {
     const video = new SyntheticVideo()
+    video.playFailureName = this.candidatePlayFailureName
     this.created.push(video)
     return video
   }
@@ -169,6 +180,10 @@ class SyntheticSurface implements NativeVideoSurface {
   }
 
   remove(video: VideoElementLike): void {
+    if (this.failRemoveOnceFor === video) {
+      this.failRemoveOnceFor = null
+      throw new Error('Synthetic remove failure.')
+    }
     this.mounted.delete(video)
   }
 
@@ -223,6 +238,28 @@ describe('native video adapter', () => {
     await adapter.destroy()
   })
 
+  it.each([
+    ['NotAllowedError', 'autoplay-blocked'],
+    ['AbortError', 'browser-suspended'],
+  ] as const)('preserves %s as a controller suspension', async (errorName, reason) => {
+    const initial = new SyntheticVideo()
+    const surface = new SyntheticSurface(initial)
+    surface.candidatePlayFailureName = errorName
+    const adapter = createNativeVideoAdapter({ video: initial, surface })
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+    })
+
+    await controller.setSource({ url: 'https://media.invalid/suspended.m3u8', kind: 'hls' })
+
+    expect(controller.getSnapshot()).toMatchObject({
+      state: 'suspended',
+      suspension: { reason, generation: 1 },
+    })
+    await controller.destroy()
+  })
+
   it('discards a prepared video safely after the adapter has been destroyed', async () => {
     const initial = new SyntheticVideo()
     const surface = new SyntheticSurface(initial)
@@ -273,6 +310,47 @@ describe('native video adapter', () => {
     })
 
     await adapter.destroy()
+  })
+
+  it('reports a gap when playback is exactly at a buffered range end', async () => {
+    const initial = new SyntheticVideo()
+    initial.currentTime = 10
+    initial.buffered = new SyntheticTimeRanges([
+      [0, 10],
+      [15, 20],
+    ])
+    const adapter = createNativeVideoAdapter({
+      video: initial,
+      surface: new SyntheticSurface(initial),
+    })
+
+    expect(adapter.getMetrics()).toMatchObject({
+      bufferedAheadSeconds: 0,
+      strandedGapSeconds: 5,
+    })
+
+    await adapter.destroy()
+  })
+
+  it('retries a failed release after promoting the next video', async () => {
+    const initial = new SyntheticVideo()
+    const surface = new SyntheticSurface(initial)
+    const adapter = createNativeVideoAdapter({ video: initial, surface })
+    const prepared = await adapter.prepare(
+      { url: 'https://media.invalid/release-retry.m3u8', kind: 'hls' },
+      5,
+    )
+    const candidate = surface.latestCreated()
+    await adapter.commit(prepared, 5)
+    await adapter.play()
+    candidate.emit('playing')
+    surface.failRemoveOnceFor = initial
+
+    candidate.renderFrame()
+    expect(surface.mounted.has(initial)).toBe(true)
+
+    await expect(adapter.destroy()).resolves.toBeUndefined()
+    expect(surface.mounted.size).toBe(0)
   })
 
   it('keeps the promoted frame visible when restoring media controls fails', async () => {
@@ -333,9 +411,10 @@ describe('native video adapter', () => {
     expect(initial.listenerCount()).toBe(0)
   })
 
-  it('sanitizes a stage failure even when candidate cleanup also fails', async () => {
+  it('retains a stage failure until candidate cleanup can be retried', async () => {
     const initial = new SyntheticVideo()
     const candidate = new SyntheticVideo()
+    let removeCalls = 0
     const surface: NativeVideoSurface = {
       createVideo(): VideoElementLike {
         return candidate
@@ -345,7 +424,10 @@ describe('native video adapter', () => {
       },
       reveal(): void {},
       remove(): void {
-        throw new Error('Raw cleanup failure with private details.')
+        removeCalls += 1
+        if (removeCalls === 1) {
+          throw new Error('Raw cleanup failure with private details.')
+        }
       },
     }
     const adapter = createNativeVideoAdapter({
@@ -360,12 +442,17 @@ describe('native video adapter', () => {
 
     await expect(preparation).rejects.toMatchObject({
       name: 'PlayerAdapterError',
-      code: 'media-prepare-failed',
+      code: 'media-activation-failed',
     })
+    expect(removeCalls).toBe(1)
+    expect(candidate.pauseCalls).toBe(1)
+
     await adapter.destroy()
+    expect(removeCalls).toBe(2)
+    expect(candidate.pauseCalls).toBe(1)
   })
 
-  it('continues releasing a candidate when frame cancellation fails', async () => {
+  it('retains a candidate until frame cancellation can be retried', async () => {
     const initial = new SyntheticVideo()
     const surface = new SyntheticSurface(initial)
     const diagnosticCodes: string[] = []
@@ -386,14 +473,16 @@ describe('native video adapter', () => {
     candidate.emit('playing')
     candidate.failFrameCancellation = true
 
-    await expect(adapter.discard(prepared)).resolves.toBeUndefined()
-    expect(surface.mounted.has(candidate)).toBe(false)
+    expect(() => adapter.discard(prepared)).toThrowError(PlayerAdapterError)
+    expect(surface.mounted.has(candidate)).toBe(true)
     expect(diagnosticCodes).toContain('media-frame-cancel-failed')
 
-    await adapter.destroy()
+    candidate.failFrameCancellation = false
+    await expect(adapter.destroy()).resolves.toBeUndefined()
+    expect(surface.mounted.has(candidate)).toBe(false)
   })
 
-  it('reports listener cleanup failure after releasing the media resource', async () => {
+  it('retains the media resource until listener cleanup can be retried', async () => {
     const initial = new SyntheticVideo()
     const surface = new SyntheticSurface(initial)
     const adapter = createNativeVideoAdapter({
@@ -407,6 +496,11 @@ describe('native video adapter', () => {
       name: 'PlayerAdapterError',
       code: 'player-adapter-cleanup-failed',
     })
+    expect(initial.src).not.toBe('')
+    expect(initial.pauseCalls).toBe(0)
+
+    initial.failListenerRemoval = false
+    await expect(adapter.destroy()).resolves.toBeUndefined()
     expect(initial.src).toBe('')
     expect(initial.pauseCalls).toBe(1)
   })

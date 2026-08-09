@@ -81,4 +81,62 @@ describe('document page activity', () => {
     expect(() => fake.fire()).not.toThrow()
     expect(seen).toEqual([false])
   })
+
+  it('rolls back a failed document binding without consuming capacity', () => {
+    const listeners = new Set<() => void>()
+    let failing = true
+    const target: PageVisibilityDocument = {
+      visibilityState: 'hidden',
+      addEventListener(_type, listener): void {
+        listeners.add(listener)
+        if (failing) {
+          throw new Error('Synthetic binding failure.')
+        }
+      },
+      removeEventListener(_type, listener): void {
+        listeners.delete(listener)
+      },
+    }
+    const activity = createDocumentPageActivity({ document: target })
+
+    for (let index = 0; index < 20; index += 1) {
+      expect(() => activity.subscribe(() => {})).toThrowError(
+        expect.objectContaining({ code: 'page-activity-subscribe-failed' }),
+      )
+    }
+    expect(listeners.size).toBe(0)
+
+    failing = false
+    const unsubscribe = activity.subscribe(() => {})
+    expect(listeners.size).toBe(1)
+    unsubscribe()
+    expect(listeners.size).toBe(0)
+  })
+
+  it('retries a failed document unbinding', () => {
+    let removeCalls = 0
+    const listeners = new Set<() => void>()
+    const target: PageVisibilityDocument = {
+      visibilityState: 'visible',
+      addEventListener(_type, listener): void {
+        listeners.add(listener)
+      },
+      removeEventListener(_type, listener): void {
+        removeCalls += 1
+        if (removeCalls === 1) {
+          throw new Error('Synthetic unbinding failure.')
+        }
+        listeners.delete(listener)
+      },
+    }
+    const activity = createDocumentPageActivity({ document: target })
+    const unsubscribe = activity.subscribe(() => {})
+
+    expect(unsubscribe).toThrowError(
+      expect.objectContaining({ code: 'page-activity-unsubscribe-failed' }),
+    )
+    expect(listeners.size).toBe(1)
+    expect(unsubscribe).not.toThrow()
+    expect(listeners.size).toBe(0)
+  })
 })

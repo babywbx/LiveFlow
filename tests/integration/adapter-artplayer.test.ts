@@ -99,6 +99,7 @@ class SyntheticPlayer implements ArtPlayerLike<SyntheticOverlay> {
   destroyCalls = 0
   failSubscriptionAfter: number | null = null
   failMutex = false
+  failRepeatedDestroy = false
 
   on(event: string, handler: (...args: readonly unknown[]) => void): void {
     if (this.failSubscriptionAfter !== null && this.addedListeners >= this.failSubscriptionAfter) {
@@ -123,6 +124,9 @@ class SyntheticPlayer implements ArtPlayerLike<SyntheticOverlay> {
 
   destroy(): void {
     this.destroyCalls += 1
+    if (this.failRepeatedDestroy && this.destroyCalls > 1) {
+      throw new Error('Synthetic repeated destroy failure.')
+    }
   }
 
   emit(event: string): void {
@@ -143,6 +147,9 @@ class SyntheticPlayer implements ArtPlayerLike<SyntheticOverlay> {
 class SyntheticSurface implements ArtPlayerSurface<SyntheticOverlay> {
   visible: ArtPlayerLike<SyntheticOverlay>
   readonly mounted = new Set<ArtPlayerLike<SyntheticOverlay>>()
+  readonly removeCalls: ArtPlayerLike<SyntheticOverlay>[] = []
+  failRemoveOnceFor: ArtPlayerLike<SyntheticOverlay> | null = null
+  failStageOnceFor: ArtPlayerLike<SyntheticOverlay> | null = null
 
   constructor(initial: ArtPlayerLike<SyntheticOverlay>) {
     this.visible = initial
@@ -151,6 +158,10 @@ class SyntheticSurface implements ArtPlayerSurface<SyntheticOverlay> {
 
   stage(player: ArtPlayerLike<SyntheticOverlay>): void {
     this.mounted.add(player)
+    if (this.failStageOnceFor === player) {
+      this.failStageOnceFor = null
+      throw new Error('Synthetic stage failure.')
+    }
   }
 
   reveal(
@@ -161,6 +172,11 @@ class SyntheticSurface implements ArtPlayerSurface<SyntheticOverlay> {
   }
 
   remove(player: ArtPlayerLike<SyntheticOverlay>): void {
+    this.removeCalls.push(player)
+    if (this.failRemoveOnceFor === player) {
+      this.failRemoveOnceFor = null
+      throw new Error('Synthetic remove failure.')
+    }
     this.mounted.delete(player)
   }
 }
@@ -220,6 +236,21 @@ describe('ArtPlayer-like adapter', () => {
 
     await adapter.destroy()
     expect(candidate?.destroyCalls).toBe(1)
+  })
+
+  it('forwards seek to the active media element', async () => {
+    const initial = new SyntheticPlayer()
+    const adapter = createArtPlayerAdapter({
+      player: initial,
+      createPlayer: createPlayerFactory([]),
+      surface: new SyntheticSurface(initial),
+    })
+
+    expect(adapter.seek).toBeTypeOf('function')
+    adapter.seek?.(12)
+    expect(initial.video.currentTime).toBe(12)
+
+    await adapter.destroy()
   })
 
   it('does not pause or destroy resources owned by another adapter instance', async () => {
@@ -282,12 +313,7 @@ describe('ArtPlayer-like adapter', () => {
 
     const preparation = adapter.prepare({ url: 'https://media.invalid/late.m3u8', kind: 'hls' }, 9)
     const destruction = adapter.destroy()
-    let destructionCompleted = false
-    void destruction.then(() => {
-      destructionCompleted = true
-    })
-    await Promise.resolve()
-    expect(destructionCompleted).toBe(true)
+    await destruction
     expect(initial.destroyCalls).toBe(1)
     expect(initial.listenerCount()).toBe(0)
 
@@ -295,10 +321,82 @@ describe('ArtPlayer-like adapter', () => {
     resolveCandidate(candidate)
 
     await expect(preparation).resolves.toEqual({ generation: 9 })
-    await destruction
     expect(candidate.destroyCalls).toBe(1)
     expect(surface.mounted.has(candidate)).toBe(false)
     await expect(adapter.discard({ generation: 9 })).resolves.toBeUndefined()
+  })
+
+  it('does not repeat a successful player destroy while retrying removal', async () => {
+    const initial = new SyntheticPlayer()
+    initial.failRepeatedDestroy = true
+    const surface = new SyntheticSurface(initial)
+    surface.failRemoveOnceFor = initial
+    const adapter = createArtPlayerAdapter({
+      player: initial,
+      createPlayer: createPlayerFactory([]),
+      surface,
+    })
+
+    await expect(adapter.destroy()).resolves.toBeUndefined()
+    expect(initial.destroyCalls).toBe(1)
+    expect(surface.mounted.has(initial)).toBe(false)
+  })
+
+  it('retains a failed late candidate release for a later destroy retry', async () => {
+    const initial = new SyntheticPlayer()
+    const surface = new SyntheticSurface(initial)
+    let resolveCandidate = (_player: ArtPlayerLike<SyntheticOverlay>): void => {
+      throw new Error('Candidate factory has not started.')
+    }
+    const adapter = createArtPlayerAdapter({
+      player: initial,
+      createPlayer(): Promise<ArtPlayerLike<SyntheticOverlay>> {
+        return new Promise((resolve) => {
+          resolveCandidate = resolve
+        })
+      },
+      surface,
+    })
+    const preparation = adapter.prepare({ url: 'https://media.invalid/late.m3u8', kind: 'hls' }, 10)
+    await adapter.destroy()
+    const candidate = new SyntheticPlayer()
+    candidate.failRepeatedDestroy = true
+    surface.failRemoveOnceFor = candidate
+
+    resolveCandidate(candidate)
+    await expect(preparation).rejects.toMatchObject({ code: 'media-release-failed' })
+    expect(surface.removeCalls.filter((player) => player === candidate)).toHaveLength(1)
+
+    await expect(adapter.destroy()).resolves.toBeUndefined()
+    expect(candidate.destroyCalls).toBe(1)
+    expect(surface.removeCalls.filter((player) => player === candidate)).toHaveLength(2)
+    expect(surface.mounted.has(candidate)).toBe(false)
+  })
+
+  it('retains a stage failure until candidate cleanup can be retried', async () => {
+    const initial = new SyntheticPlayer()
+    const candidate = new SyntheticPlayer()
+    candidate.failRepeatedDestroy = true
+    const surface = new SyntheticSurface(initial)
+    surface.failStageOnceFor = candidate
+    surface.failRemoveOnceFor = candidate
+    const adapter = createArtPlayerAdapter({
+      player: initial,
+      createPlayer(): ArtPlayerLike<SyntheticOverlay> {
+        return candidate
+      },
+      surface,
+    })
+
+    await expect(
+      adapter.prepare({ url: 'https://media.invalid/stage-failure.m3u8', kind: 'hls' }, 11),
+    ).rejects.toMatchObject({ code: 'media-activation-failed' })
+    expect(candidate.destroyCalls).toBe(1)
+    expect(surface.mounted.has(candidate)).toBe(true)
+
+    await adapter.destroy()
+    expect(candidate.destroyCalls).toBe(1)
+    expect(surface.mounted.has(candidate)).toBe(false)
   })
 
   it('rolls back partial initial player subscriptions and throws a typed error', () => {

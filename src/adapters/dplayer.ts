@@ -8,6 +8,7 @@ export interface DPlayerLike {
   readonly video: VideoElementLike
   readonly container?: HTMLElement
   on(event: string, handler: (...args: readonly unknown[]) => void): void
+  off?(event: string, handler: (...args: readonly unknown[]) => void): void
   destroy(): void
 }
 
@@ -38,7 +39,6 @@ export function createDPlayerAdapter(options: DPlayerAdapterOptions): LivePlayer
       scope: 'dplayer',
       operations: {
         createCandidate: 'create a DPlayer candidate',
-        releaseFailedCandidate: 'release a failed DPlayer candidate',
         releaseInstance: 'release a DPlayer instance',
       },
       initialPlayer: options.player,
@@ -56,11 +56,12 @@ export function createDPlayerAdapter(options: DPlayerAdapterOptions): LivePlayer
   )
 }
 
-// DPlayer has no off(); a disposed flag keeps handlers inert.
 function subscribeToDPlayer(
   player: DPlayerLike,
   listener: (event: ResourceEvent) => void,
 ): () => void {
+  const video = player.video
+  const readyAtSubscription = video.readyState >= 2
   let disposed = false
   const forward = (event: ResourceEvent): void => {
     if (!disposed) {
@@ -99,18 +100,20 @@ function subscribeToDPlayer(
     ['destroy', externallyDestroyed],
   ] as const
 
+  let unsubscribe: () => void
   try {
-    bindManagedEvents('dplayer', 'DPlayer', player, registrations)
+    unsubscribe = bindManagedEvents('dplayer', 'DPlayer', player, registrations)
   } catch (bindError) {
     disposed = true
     throw bindError
   }
-  if (player.video.readyState >= 2) {
+  if (readyAtSubscription) {
     ready()
   }
 
   return () => {
     disposed = true
+    unsubscribe()
   }
 }
 

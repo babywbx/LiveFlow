@@ -88,7 +88,7 @@ class SyntheticVideo implements VideoElementLike {
 
 class SyntheticDPlayer implements DPlayerLike {
   readonly video = new SyntheticVideo()
-  private readonly listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>()
+  protected readonly listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>()
   private addedListeners = 0
   destroyCalls = 0
   failSubscriptionAfter: number | null = null
@@ -112,6 +112,46 @@ class SyntheticDPlayer implements DPlayerLike {
       listener()
     }
   }
+
+  listenerCount(): number {
+    let count = 0
+    for (const listeners of this.listeners.values()) {
+      count += listeners.size
+    }
+    return count
+  }
+}
+
+class SyntheticDPlayerWithOff extends SyntheticDPlayer {
+  off(event: string, handler: (...args: readonly unknown[]) => void): void {
+    this.listeners.get(event)?.delete(handler)
+  }
+}
+
+class ThrowingVideoDPlayer implements DPlayerLike {
+  private readonly media = new SyntheticVideo()
+  private readonly listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>()
+  videoReads = 0
+
+  get video(): VideoElementLike {
+    this.videoReads += 1
+    if (this.videoReads === 2) {
+      throw new Error('Synthetic video getter failure.')
+    }
+    return this.media
+  }
+
+  on(event: string, handler: (...args: readonly unknown[]) => void): void {
+    const listeners = this.listeners.get(event) ?? new Set()
+    listeners.add(handler)
+    this.listeners.set(event, listeners)
+  }
+
+  off(event: string, handler: (...args: readonly unknown[]) => void): void {
+    this.listeners.get(event)?.delete(handler)
+  }
+
+  destroy(): void {}
 
   listenerCount(): number {
     let count = 0
@@ -279,5 +319,32 @@ describe('DPlayer-like adapter', () => {
     }).not.toThrow()
     expect(events).toEqual([])
     await expect(adapter.destroy()).resolves.toBeUndefined()
+  })
+
+  it('unsubscribes player events when off() is available', async () => {
+    const initial = new SyntheticDPlayerWithOff()
+    const adapter = createDPlayerAdapter({
+      player: initial,
+      createPlayer: createPlayerFactory([]),
+      surface: new SyntheticSurface(initial),
+    })
+
+    expect(initial.listenerCount()).toBeGreaterThan(0)
+    await adapter.destroy()
+    expect(initial.listenerCount()).toBe(0)
+  })
+
+  it('does not retain handlers when the initial video getter fails', () => {
+    const initial = new ThrowingVideoDPlayer()
+
+    expect(() =>
+      createDPlayerAdapter({
+        player: initial,
+        createPlayer: createPlayerFactory([]),
+        surface: new SyntheticSurface(initial),
+      }),
+    ).toThrow(PlayerAdapterError)
+    expect(initial.videoReads).toBe(2)
+    expect(initial.listenerCount()).toBe(0)
   })
 })

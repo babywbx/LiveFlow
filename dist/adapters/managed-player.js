@@ -2,59 +2,46 @@ import { PlayerAdapterError } from './adapter-error.js';
 import { createMediaSessionAdapter, } from './media-session-adapter.js';
 export function createManagedPlayerAdapter(contract, options) {
     const driver = {
-        initialResource: contract.initialPlayer,
+        initialResource: createResource(contract.initialPlayer),
         async create(source, generation) {
-            let player = null;
             try {
-                player = await contract.createPlayer(source, generation);
-                contract.surface.stage(player);
+                return createResource(await contract.createPlayer(source, generation));
             }
             catch {
-                if (player !== null) {
-                    let cleanupFailed = false;
-                    try {
-                        contract.destroyPlayer(player);
-                    }
-                    catch {
-                        cleanupFailed = true;
-                    }
-                    try {
-                        contract.surface.remove(player);
-                    }
-                    catch {
-                        cleanupFailed = true;
-                    }
-                    if (cleanupFailed) {
-                        throw new PlayerAdapterError(`${contract.scope}-cleanup-failed`, contract.operations.releaseFailedCandidate);
-                    }
-                }
                 throw new PlayerAdapterError(`${contract.scope}-create-failed`, contract.operations.createCandidate);
             }
-            return player;
         },
-        activate(_player, _source) { },
-        video(player) {
-            return contract.video(player);
+        activate(resource, _source) {
+            contract.surface.stage(resource.player);
         },
-        subscribe(player, listener) {
-            return contract.subscribe(player, listener);
+        video(resource) {
+            return contract.video(resource.player);
+        },
+        subscribe(resource, listener) {
+            return contract.subscribe(resource.player, listener);
         },
         reveal(next, previous) {
-            contract.surface.reveal(next, previous);
+            contract.surface.reveal(next.player, previous.player);
         },
-        release(player) {
+        release(resource) {
             let cleanupFailed = false;
-            try {
-                contract.destroyPlayer(player);
+            if (!resource.destroyed) {
+                try {
+                    contract.destroyPlayer(resource.player);
+                    resource.destroyed = true;
+                }
+                catch {
+                    cleanupFailed = true;
+                }
             }
-            catch {
-                cleanupFailed = true;
-            }
-            try {
-                contract.surface.remove(player);
-            }
-            catch {
-                cleanupFailed = true;
+            if (!resource.removed) {
+                try {
+                    contract.surface.remove(resource.player);
+                    resource.removed = true;
+                }
+                catch {
+                    cleanupFailed = true;
+                }
             }
             if (cleanupFailed) {
                 throw new PlayerAdapterError(`${contract.scope}-cleanup-failed`, contract.operations.releaseInstance);
@@ -62,6 +49,9 @@ export function createManagedPlayerAdapter(contract, options) {
         },
     };
     return createMediaSessionAdapter(driver, options);
+    function createResource(player) {
+        return { player, destroyed: false, removed: false };
+    }
 }
 export function bindManagedEvents(scope, label, target, registrations) {
     const subscribed = [];

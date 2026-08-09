@@ -43,7 +43,6 @@ export function createVideoJsAdapter(options: VideoJsAdapterOptions): LivePlayer
       scope: 'videojs',
       operations: {
         createCandidate: 'create a Video.js candidate',
-        releaseFailedCandidate: 'release a failed Video.js candidate',
         releaseInstance: 'release a Video.js instance',
       },
       initialPlayer: options.player,
@@ -123,8 +122,9 @@ function subscribeToVideoJs(
   ] as const
 
   const video = requireVideo(player)
+  const readyAtSubscription = video.readyState >= 2
   const unsubscribe = bindManagedEvents('videojs', 'Video.js', player, registrations)
-  if (video.readyState >= 2) {
+  if (readyAtSubscription) {
     ready()
   }
 

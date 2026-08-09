@@ -50,6 +50,12 @@ export interface ArtPlayerAdapter<OverlayContainer = HTMLElement> extends LivePl
   getOverlayContainer(): OverlayContainer | null
 }
 
+interface ArtPlayerResource<OverlayContainer> {
+  readonly player: ArtPlayerLike<OverlayContainer>
+  destroyed: boolean
+  removed: boolean
+}
+
 export type { TimeRangesLike, VideoElementLike } from './media-session-adapter.js'
 export { PlayerAdapterError } from './adapter-error.js'
 
@@ -64,65 +70,57 @@ export function createArtPlayerAdapter<OverlayContainer = HTMLElement>(
     throw new PlayerAdapterError('artplayer-mutex-failed', 'disable the initial player mutex')
   }
 
-  const driver: MediaResourceDriver<ArtPlayerLike<OverlayContainer>> = {
-    initialResource: options.player,
-    async create(source: LiveSource, generation: number): Promise<ArtPlayerLike<OverlayContainer>> {
-      let player: ArtPlayerLike<OverlayContainer> | null = null
+  const driver: MediaResourceDriver<ArtPlayerResource<OverlayContainer>> = {
+    initialResource: createResource(options.player),
+    async create(
+      source: LiveSource,
+      generation: number,
+    ): Promise<ArtPlayerResource<OverlayContainer>> {
       try {
-        player = await options.createPlayer(source, generation, { mutex: false })
-        player.setMutex(false)
-        surface.stage(player)
+        return createResource(await options.createPlayer(source, generation, { mutex: false }))
       } catch {
-        if (player !== null) {
-          let cleanupFailed = false
-          try {
-            player.destroy()
-          } catch {
-            cleanupFailed = true
-          }
-          try {
-            surface.remove(player)
-          } catch {
-            cleanupFailed = true
-          }
-          if (cleanupFailed) {
-            throw new PlayerAdapterError(
-              'artplayer-cleanup-failed',
-              'release a failed ArtPlayer candidate',
-            )
-          }
-        }
         throw new PlayerAdapterError('artplayer-create-failed', 'create an ArtPlayer candidate')
       }
-      return player
     },
-    activate(_resource: ArtPlayerLike<OverlayContainer>, _source: LiveSource): void {},
-    video(resource: ArtPlayerLike<OverlayContainer>): VideoElementLike {
-      return resource.video
+    activate(resource: ArtPlayerResource<OverlayContainer>, _source: LiveSource): void {
+      resource.player.setMutex(false)
+      surface.stage(resource.player)
+    },
+    video(resource: ArtPlayerResource<OverlayContainer>): VideoElementLike {
+      return resource.player.video
     },
     subscribe(
-      resource: ArtPlayerLike<OverlayContainer>,
+      resource: ArtPlayerResource<OverlayContainer>,
       listener: (event: ResourceEvent) => void,
     ): () => void {
-      return subscribeToArtPlayer(resource, listener)
+      return subscribeToArtPlayer(resource.player, listener)
     },
-    reveal(next: ArtPlayerLike<OverlayContainer>, previous: ArtPlayerLike<OverlayContainer>): void {
-      surface.reveal(next, previous)
-      visiblePlayer = next
+    reveal(
+      next: ArtPlayerResource<OverlayContainer>,
+      previous: ArtPlayerResource<OverlayContainer>,
+    ): void {
+      surface.reveal(next.player, previous.player)
+      visiblePlayer = next.player
     },
-    release(resource: ArtPlayerLike<OverlayContainer>): void {
+    release(resource: ArtPlayerResource<OverlayContainer>): void {
       let cleanupFailed = false
-      try {
-        resource.destroy()
-      } catch {
-        cleanupFailed = true
+      if (!resource.destroyed) {
+        try {
+          resource.player.destroy()
+          resource.destroyed = true
+        } catch {
+          cleanupFailed = true
+        }
       }
-      try {
-        surface.remove(resource)
-      } catch {
-        cleanupFailed = true
+      if (!resource.removed) {
+        try {
+          surface.remove(resource.player)
+          resource.removed = true
+        } catch {
+          cleanupFailed = true
+        }
       }
-      if (visiblePlayer === resource) {
+      if (visiblePlayer === resource.player) {
         visiblePlayer = null
       }
       if (cleanupFailed) {
@@ -161,6 +159,9 @@ export function createArtPlayerAdapter<OverlayContainer = HTMLElement>(
     getMetrics(): PlaybackMetrics {
       return adapter.getMetrics()
     },
+    seek(seconds: number): void {
+      adapter.seek?.(seconds)
+    },
     subscribe(listener: PlaybackEventListener): () => void {
       return adapter.subscribe(listener)
     },
@@ -171,12 +172,20 @@ export function createArtPlayerAdapter<OverlayContainer = HTMLElement>(
       return visiblePlayer?.overlayContainer ?? options.overlayContainer ?? null
     },
   }
+
+  function createResource(
+    player: ArtPlayerLike<OverlayContainer>,
+  ): ArtPlayerResource<OverlayContainer> {
+    return { player, destroyed: false, removed: false }
+  }
 }
 
 function subscribeToArtPlayer<OverlayContainer>(
   player: ArtPlayerLike<OverlayContainer>,
   listener: (event: ResourceEvent) => void,
 ): () => void {
+  const video = player.video
+  const readyAtSubscription = video.readyState >= 2
   const ready = (): void => {
     listener({ type: 'ready' })
   }
@@ -231,7 +240,7 @@ function subscribeToArtPlayer<OverlayContainer>(
     }
     throw new PlayerAdapterError('artplayer-subscribe-failed', 'subscribe to ArtPlayer events')
   }
-  if (player.video.readyState >= 2) {
+  if (readyAtSubscription) {
     ready()
   }
 

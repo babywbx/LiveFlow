@@ -1,4 +1,4 @@
-import { CapacityExceededError } from '../shared/errors.js'
+import { CapacityExceededError, sanitizeErrorName } from '../shared/errors.js'
 import type {
   LivePlayerAdapter,
   LiveSource,
@@ -75,6 +75,8 @@ interface Session<Resource> {
   stalledSince: number | null
   frameHandle: number | null
   committed: boolean
+  unsubscribed: boolean
+  resourceReleased: boolean
   released: boolean
 }
 
@@ -86,17 +88,24 @@ export function createMediaSessionAdapter<Resource>(
   const listeners = new Set<PlaybackEventListener>()
   const sessions = new Map<number, Session<Resource>>()
   const pendingCreations = new Set<Promise<Resource>>()
+  const cleanupSessions = new Set<Session<Resource>>()
+  const cleanupResources = new Set<Resource>()
+  const initialControls = readInitialControls()
   let current: Session<Resource> | null = createInitialSession(driver.initialResource)
   let committed: Session<Resource> | null = null
   let destroyed = false
   let destroyPromise: Promise<void> | null = null
-  let desiredMuted = driver.video(driver.initialResource).muted
-  let desiredVolume = driver.video(driver.initialResource).volume
-  let desiredPlaybackRate = driver.video(driver.initialResource).playbackRate
+  let destroyComplete = false
+  let desiredMuted = initialControls.muted
+  let desiredVolume = initialControls.volume
+  let desiredPlaybackRate = initialControls.playbackRate
 
   return {
     async prepare(source: LiveSource, generation: number): Promise<PreparedSource> {
       ensureActive()
+      if (!retryPendingCleanup()) {
+        throw new PlayerAdapterError('player-adapter-cleanup-pending', 'prepare a media source')
+      }
       if (sessions.has(generation)) {
         throw new PlayerAdapterError('duplicate-media-generation', 'prepare')
       }
@@ -122,13 +131,17 @@ export function createMediaSessionAdapter<Resource>(
 
       const prepared: PreparedToken = Object.freeze({ generation })
       if (destroyed) {
-        if (!releaseResource(resource)) {
+        if (!releaseOrRetainResource(resource)) {
           throw new PlayerAdapterError('media-release-failed', 'release a late media candidate')
         }
         return prepared
       }
+      if (!retryPendingCleanup()) {
+        releaseOrRetainResource(resource)
+        throw new PlayerAdapterError('player-adapter-cleanup-pending', 'prepare a media source')
+      }
       if (sessions.has(generation)) {
-        releaseResource(resource)
+        releaseOrRetainResource(resource)
         throw new PlayerAdapterError('duplicate-media-generation', 'prepare')
       }
 
@@ -141,7 +154,7 @@ export function createMediaSessionAdapter<Resource>(
           }
         })
       } catch {
-        releaseResource(resource)
+        releaseOrRetainResource(resource)
         throw new PlayerAdapterError('media-subscribe-failed', 'subscribe to media events')
       }
       session = {
@@ -152,6 +165,8 @@ export function createMediaSessionAdapter<Resource>(
         stalledSince: null,
         frameHandle: null,
         committed: false,
+        unsubscribed: false,
+        resourceReleased: false,
         released: false,
       }
       sessions.set(generation, session)
@@ -180,8 +195,15 @@ export function createMediaSessionAdapter<Resource>(
       }
 
       if (committed !== null && committed !== session && committed !== current) {
-        sessions.delete(committed.generation)
-        releaseSession(committed)
+        const replaced = committed
+        sessions.delete(replaced.generation)
+        committed = null
+        if (!releaseSession(replaced)) {
+          throw new PlayerAdapterError(
+            'media-commit-cleanup-failed',
+            'release the replaced media candidate',
+          )
+        }
       }
       session.committed = true
       committed = session
@@ -217,8 +239,15 @@ export function createMediaSessionAdapter<Resource>(
 
       try {
         await driver.video(target.resource).play()
-      } catch {
-        throw new PlayerAdapterError('media-play-failed', 'play')
+      } catch (error) {
+        const name = sanitizeErrorName(error)
+        const code =
+          name === 'NotAllowedError'
+            ? 'media-play-autoplay-blocked'
+            : name === 'AbortError'
+              ? 'media-play-browser-suspended'
+              : 'media-play-failed'
+        throw new PlayerAdapterError(code, 'play')
       }
     },
 
@@ -323,11 +352,31 @@ export function createMediaSessionAdapter<Resource>(
     },
 
     destroy(): Promise<void> {
+      if (destroyComplete) {
+        return Promise.resolve()
+      }
       if (destroyPromise !== null) {
         return destroyPromise
       }
-      destroyPromise = performDestroy()
-      return destroyPromise
+      const flight = Promise.resolve().then(() => performDestroy())
+      destroyPromise = flight
+      destroyed = true
+      void flight.then(
+        () => {
+          if (destroyPromise !== flight) {
+            return
+          }
+          destroyComplete =
+            pendingCreations.size === 0 && cleanupSessions.size === 0 && cleanupResources.size === 0
+          destroyPromise = null
+        },
+        () => {
+          if (destroyPromise === flight) {
+            destroyPromise = null
+          }
+        },
+      )
+      return flight
     },
   }
 
@@ -351,6 +400,8 @@ export function createMediaSessionAdapter<Resource>(
       stalledSince: null,
       frameHandle: null,
       committed: true,
+      unsubscribed: false,
+      resourceReleased: false,
       released: false,
     }
     return session
@@ -477,23 +528,39 @@ export function createMediaSessionAdapter<Resource>(
 
   function releaseSession(session: Session<Resource>): boolean {
     if (session.released) {
+      cleanupSessions.delete(session)
       return true
     }
-    session.released = true
     try {
       cancelFrame(session)
     } catch {
       emitDiagnostic('media-frame-cancel-failed', session.generation)
     }
-    let unsubscribed = true
-    try {
-      session.unsubscribe()
-    } catch {
-      unsubscribed = false
-      emitDiagnostic('media-unsubscribe-failed', session.generation)
+    if (session.frameHandle === null && !session.unsubscribed) {
+      try {
+        session.unsubscribe()
+        session.unsubscribed = true
+      } catch {
+        emitDiagnostic('media-unsubscribe-failed', session.generation)
+      }
     }
-    const released = releaseResource(session.resource)
-    return unsubscribed && released
+    if (
+      session.frameHandle === null &&
+      session.unsubscribed &&
+      !session.resourceReleased &&
+      releaseResource(session.resource)
+    ) {
+      session.resourceReleased = true
+    }
+    session.released =
+      session.frameHandle === null && session.unsubscribed && session.resourceReleased
+    if (session.released) {
+      cleanupSessions.delete(session)
+    } else {
+      cleanupSessions.add(session)
+      destroyComplete = false
+    }
+    return session.released
   }
 
   function releaseResource(resource: Resource): boolean {
@@ -506,16 +573,38 @@ export function createMediaSessionAdapter<Resource>(
     }
   }
 
+  function releaseOrRetainResource(resource: Resource): boolean {
+    if (releaseResource(resource)) {
+      cleanupResources.delete(resource)
+      return true
+    }
+    cleanupResources.add(resource)
+    destroyComplete = false
+    return false
+  }
+
+  function retryPendingCleanup(): boolean {
+    let cleanupComplete = true
+    for (const session of cleanupSessions) {
+      cleanupComplete = releaseSession(session) && cleanupComplete
+    }
+    for (const resource of cleanupResources) {
+      cleanupComplete = releaseOrRetainResource(resource) && cleanupComplete
+    }
+    return cleanupComplete
+  }
+
   function cancelFrame(session: Session<Resource>): void {
     if (session.frameHandle === null) {
       return
     }
     const handle = session.frameHandle
-    session.frameHandle = null
     const video = driver.video(session.resource)
-    if (video.cancelVideoFrameCallback !== undefined) {
-      video.cancelVideoFrameCallback(handle)
+    if (video.cancelVideoFrameCallback === undefined) {
+      throw new PlayerAdapterError('media-frame-cancel-unavailable', 'cancel a video frame')
     }
+    video.cancelVideoFrameCallback(handle)
+    session.frameHandle = null
   }
 
   function applyCandidateControls(video: VideoElementLike): void {
@@ -559,7 +648,6 @@ export function createMediaSessionAdapter<Resource>(
   }
 
   function performDestroy(): Promise<void> {
-    destroyed = true
     listeners.clear()
     const releasable = new Set<Session<Resource>>()
     if (current !== null) {
@@ -574,13 +662,10 @@ export function createMediaSessionAdapter<Resource>(
     sessions.clear()
     committed = null
     current = null
-    let cleanupFailed = false
     for (const session of releasable) {
-      if (!releaseSession(session)) {
-        cleanupFailed = true
-      }
+      releaseSession(session)
     }
-    if (cleanupFailed) {
+    if (!retryPendingCleanup()) {
       return Promise.reject(
         new PlayerAdapterError('player-adapter-cleanup-failed', 'destroy the adapter'),
       )
@@ -591,6 +676,23 @@ export function createMediaSessionAdapter<Resource>(
   function ensureActive(): void {
     if (destroyed) {
       throw new PlayerAdapterError('player-adapter-destroyed', 'use a destroyed adapter')
+    }
+  }
+
+  function readInitialControls(): {
+    readonly muted: boolean
+    readonly volume: number
+    readonly playbackRate: number
+  } {
+    try {
+      const video = driver.video(driver.initialResource)
+      return {
+        muted: video.muted,
+        volume: video.volume,
+        playbackRate: video.playbackRate,
+      }
+    } catch {
+      throw new PlayerAdapterError('media-controls-read-failed', 'read initial media controls')
     }
   }
 }
@@ -609,7 +711,7 @@ function readMetrics(video: VideoElementLike, stalledSince: number | null): Play
   for (let index = 0; index < video.buffered.length; index += 1) {
     const start = video.buffered.start(index)
     const end = video.buffered.end(index)
-    if (currentTime >= start && currentTime <= end) {
+    if (currentTime >= start && currentTime < end) {
       inRange = true
       bufferedAhead = Math.max(bufferedAhead, end - currentTime)
     } else if (start > currentTime && (nextStart === null || start < nextStart)) {

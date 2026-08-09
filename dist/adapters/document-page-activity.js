@@ -1,4 +1,4 @@
-import { CapacityExceededError } from '../shared/errors.js';
+import { CapacityExceededError, LiveFlowError } from '../shared/errors.js';
 const MAX_PAGE_ACTIVITY_LISTENERS = 16;
 export function createDocumentPageActivity(options = {}) {
     const target = options.document ?? globalThis.document;
@@ -22,20 +22,38 @@ export function createDocumentPageActivity(options = {}) {
             if (!listeners.has(listener) && listeners.size >= MAX_PAGE_ACTIVITY_LISTENERS) {
                 throw new CapacityExceededError('page-activity-listeners', MAX_PAGE_ACTIVITY_LISTENERS);
             }
-            listeners.add(listener);
             if (bound === null) {
-                target.addEventListener('visibilitychange', notify);
+                try {
+                    target.addEventListener('visibilitychange', notify);
+                }
+                catch {
+                    try {
+                        target.removeEventListener('visibilitychange', notify);
+                    }
+                    catch {
+                    }
+                    throw new LiveFlowError('page-activity-subscribe-failed', 'Could not subscribe to page visibility changes.');
+                }
                 bound = () => {
                     target.removeEventListener('visibilitychange', notify);
                 };
             }
+            listeners.add(listener);
             return () => {
-                listeners.delete(listener);
-                if (listeners.size === 0 && bound !== null) {
-                    const unbind = bound;
-                    bound = null;
-                    unbind();
+                if (!listeners.has(listener)) {
+                    return;
                 }
+                if (listeners.size === 1 && bound !== null) {
+                    const unbind = bound;
+                    try {
+                        unbind();
+                        bound = null;
+                    }
+                    catch {
+                        throw new LiveFlowError('page-activity-unsubscribe-failed', 'Could not unsubscribe from page visibility changes.');
+                    }
+                }
+                listeners.delete(listener);
             };
         },
     };

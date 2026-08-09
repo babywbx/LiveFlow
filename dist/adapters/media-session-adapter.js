@@ -1,4 +1,4 @@
-import { CapacityExceededError } from '../shared/errors.js';
+import { CapacityExceededError, sanitizeErrorName } from '../shared/errors.js';
 import { PlayerAdapterError } from './adapter-error.js';
 const MAX_LISTENERS = 32;
 const MAX_PREPARED_SESSIONS = 4;
@@ -7,16 +7,23 @@ export function createMediaSessionAdapter(driver, options) {
     const listeners = new Set();
     const sessions = new Map();
     const pendingCreations = new Set();
+    const cleanupSessions = new Set();
+    const cleanupResources = new Set();
+    const initialControls = readInitialControls();
     let current = createInitialSession(driver.initialResource);
     let committed = null;
     let destroyed = false;
     let destroyPromise = null;
-    let desiredMuted = driver.video(driver.initialResource).muted;
-    let desiredVolume = driver.video(driver.initialResource).volume;
-    let desiredPlaybackRate = driver.video(driver.initialResource).playbackRate;
+    let destroyComplete = false;
+    let desiredMuted = initialControls.muted;
+    let desiredVolume = initialControls.volume;
+    let desiredPlaybackRate = initialControls.playbackRate;
     return {
         async prepare(source, generation) {
             ensureActive();
+            if (!retryPendingCleanup()) {
+                throw new PlayerAdapterError('player-adapter-cleanup-pending', 'prepare a media source');
+            }
             if (sessions.has(generation)) {
                 throw new PlayerAdapterError('duplicate-media-generation', 'prepare');
             }
@@ -43,13 +50,17 @@ export function createMediaSessionAdapter(driver, options) {
             }
             const prepared = Object.freeze({ generation });
             if (destroyed) {
-                if (!releaseResource(resource)) {
+                if (!releaseOrRetainResource(resource)) {
                     throw new PlayerAdapterError('media-release-failed', 'release a late media candidate');
                 }
                 return prepared;
             }
+            if (!retryPendingCleanup()) {
+                releaseOrRetainResource(resource);
+                throw new PlayerAdapterError('player-adapter-cleanup-pending', 'prepare a media source');
+            }
             if (sessions.has(generation)) {
-                releaseResource(resource);
+                releaseOrRetainResource(resource);
                 throw new PlayerAdapterError('duplicate-media-generation', 'prepare');
             }
             let session = null;
@@ -62,7 +73,7 @@ export function createMediaSessionAdapter(driver, options) {
                 });
             }
             catch {
-                releaseResource(resource);
+                releaseOrRetainResource(resource);
                 throw new PlayerAdapterError('media-subscribe-failed', 'subscribe to media events');
             }
             session = {
@@ -73,6 +84,8 @@ export function createMediaSessionAdapter(driver, options) {
                 stalledSince: null,
                 frameHandle: null,
                 committed: false,
+                unsubscribed: false,
+                resourceReleased: false,
                 released: false,
             };
             sessions.set(generation, session);
@@ -96,8 +109,12 @@ export function createMediaSessionAdapter(driver, options) {
                 throw new PlayerAdapterError('unknown-prepared-source', 'commit');
             }
             if (committed !== null && committed !== session && committed !== current) {
-                sessions.delete(committed.generation);
-                releaseSession(committed);
+                const replaced = committed;
+                sessions.delete(replaced.generation);
+                committed = null;
+                if (!releaseSession(replaced)) {
+                    throw new PlayerAdapterError('media-commit-cleanup-failed', 'release the replaced media candidate');
+                }
             }
             session.committed = true;
             committed = session;
@@ -130,8 +147,14 @@ export function createMediaSessionAdapter(driver, options) {
             try {
                 await driver.video(target.resource).play();
             }
-            catch {
-                throw new PlayerAdapterError('media-play-failed', 'play');
+            catch (error) {
+                const name = sanitizeErrorName(error);
+                const code = name === 'NotAllowedError'
+                    ? 'media-play-autoplay-blocked'
+                    : name === 'AbortError'
+                        ? 'media-play-browser-suspended'
+                        : 'media-play-failed';
+                throw new PlayerAdapterError(code, 'play');
             }
         },
         pause() {
@@ -232,11 +255,28 @@ export function createMediaSessionAdapter(driver, options) {
             };
         },
         destroy() {
+            if (destroyComplete) {
+                return Promise.resolve();
+            }
             if (destroyPromise !== null) {
                 return destroyPromise;
             }
-            destroyPromise = performDestroy();
-            return destroyPromise;
+            const flight = Promise.resolve().then(() => performDestroy());
+            destroyPromise = flight;
+            destroyed = true;
+            void flight.then(() => {
+                if (destroyPromise !== flight) {
+                    return;
+                }
+                destroyComplete =
+                    pendingCreations.size === 0 && cleanupSessions.size === 0 && cleanupResources.size === 0;
+                destroyPromise = null;
+            }, () => {
+                if (destroyPromise === flight) {
+                    destroyPromise = null;
+                }
+            });
+            return flight;
         },
     };
     function createInitialSession(resource) {
@@ -260,6 +300,8 @@ export function createMediaSessionAdapter(driver, options) {
             stalledSince: null,
             frameHandle: null,
             committed: true,
+            unsubscribed: false,
+            resourceReleased: false,
             released: false,
         };
         return session;
@@ -375,25 +417,40 @@ export function createMediaSessionAdapter(driver, options) {
     }
     function releaseSession(session) {
         if (session.released) {
+            cleanupSessions.delete(session);
             return true;
         }
-        session.released = true;
         try {
             cancelFrame(session);
         }
         catch {
             emitDiagnostic('media-frame-cancel-failed', session.generation);
         }
-        let unsubscribed = true;
-        try {
-            session.unsubscribe();
+        if (session.frameHandle === null && !session.unsubscribed) {
+            try {
+                session.unsubscribe();
+                session.unsubscribed = true;
+            }
+            catch {
+                emitDiagnostic('media-unsubscribe-failed', session.generation);
+            }
         }
-        catch {
-            unsubscribed = false;
-            emitDiagnostic('media-unsubscribe-failed', session.generation);
+        if (session.frameHandle === null &&
+            session.unsubscribed &&
+            !session.resourceReleased &&
+            releaseResource(session.resource)) {
+            session.resourceReleased = true;
         }
-        const released = releaseResource(session.resource);
-        return unsubscribed && released;
+        session.released =
+            session.frameHandle === null && session.unsubscribed && session.resourceReleased;
+        if (session.released) {
+            cleanupSessions.delete(session);
+        }
+        else {
+            cleanupSessions.add(session);
+            destroyComplete = false;
+        }
+        return session.released;
     }
     function releaseResource(resource) {
         try {
@@ -405,16 +462,36 @@ export function createMediaSessionAdapter(driver, options) {
             return false;
         }
     }
+    function releaseOrRetainResource(resource) {
+        if (releaseResource(resource)) {
+            cleanupResources.delete(resource);
+            return true;
+        }
+        cleanupResources.add(resource);
+        destroyComplete = false;
+        return false;
+    }
+    function retryPendingCleanup() {
+        let cleanupComplete = true;
+        for (const session of cleanupSessions) {
+            cleanupComplete = releaseSession(session) && cleanupComplete;
+        }
+        for (const resource of cleanupResources) {
+            cleanupComplete = releaseOrRetainResource(resource) && cleanupComplete;
+        }
+        return cleanupComplete;
+    }
     function cancelFrame(session) {
         if (session.frameHandle === null) {
             return;
         }
         const handle = session.frameHandle;
-        session.frameHandle = null;
         const video = driver.video(session.resource);
-        if (video.cancelVideoFrameCallback !== undefined) {
-            video.cancelVideoFrameCallback(handle);
+        if (video.cancelVideoFrameCallback === undefined) {
+            throw new PlayerAdapterError('media-frame-cancel-unavailable', 'cancel a video frame');
         }
+        video.cancelVideoFrameCallback(handle);
+        session.frameHandle = null;
     }
     function applyCandidateControls(video) {
         video.muted = true;
@@ -456,7 +533,6 @@ export function createMediaSessionAdapter(driver, options) {
         }
     }
     function performDestroy() {
-        destroyed = true;
         listeners.clear();
         const releasable = new Set();
         if (current !== null) {
@@ -471,13 +547,10 @@ export function createMediaSessionAdapter(driver, options) {
         sessions.clear();
         committed = null;
         current = null;
-        let cleanupFailed = false;
         for (const session of releasable) {
-            if (!releaseSession(session)) {
-                cleanupFailed = true;
-            }
+            releaseSession(session);
         }
-        if (cleanupFailed) {
+        if (!retryPendingCleanup()) {
             return Promise.reject(new PlayerAdapterError('player-adapter-cleanup-failed', 'destroy the adapter'));
         }
         return Promise.resolve();
@@ -485,6 +558,19 @@ export function createMediaSessionAdapter(driver, options) {
     function ensureActive() {
         if (destroyed) {
             throw new PlayerAdapterError('player-adapter-destroyed', 'use a destroyed adapter');
+        }
+    }
+    function readInitialControls() {
+        try {
+            const video = driver.video(driver.initialResource);
+            return {
+                muted: video.muted,
+                volume: video.volume,
+                playbackRate: video.playbackRate,
+            };
+        }
+        catch {
+            throw new PlayerAdapterError('media-controls-read-failed', 'read initial media controls');
         }
     }
 }
@@ -500,7 +586,7 @@ function readMetrics(video, stalledSince) {
     for (let index = 0; index < video.buffered.length; index += 1) {
         const start = video.buffered.start(index);
         const end = video.buffered.end(index);
-        if (currentTime >= start && currentTime <= end) {
+        if (currentTime >= start && currentTime < end) {
             inRange = true;
             bufferedAhead = Math.max(bufferedAhead, end - currentTime);
         }

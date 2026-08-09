@@ -7,7 +7,6 @@ export interface ManagedPlayerSurface<Player> {
 }
 export interface ManagedPlayerOperations {
     readonly createCandidate: string;
-    readonly releaseFailedCandidate: string;
     readonly releaseInstance: string;
 }
 export interface ManagedPlayerContract<Player> {

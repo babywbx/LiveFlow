@@ -16,7 +16,6 @@ export interface ManagedPlayerSurface<Player> {
 
 export interface ManagedPlayerOperations {
   readonly createCandidate: string
-  readonly releaseFailedCandidate: string
   readonly releaseInstance: string
 }
 
@@ -31,65 +30,60 @@ export interface ManagedPlayerContract<Player> {
   readonly destroyPlayer: (player: Player) => void
 }
 
+interface ManagedPlayerResource<Player> {
+  readonly player: Player
+  destroyed: boolean
+  removed: boolean
+}
+
 export function createManagedPlayerAdapter<Player>(
   contract: ManagedPlayerContract<Player>,
   options: MediaSessionAdapterOptions,
 ): LivePlayerAdapter {
-  const driver: MediaResourceDriver<Player> = {
-    initialResource: contract.initialPlayer,
-    async create(source: LiveSource, generation: number): Promise<Player> {
-      let player: Player | null = null
+  const driver: MediaResourceDriver<ManagedPlayerResource<Player>> = {
+    initialResource: createResource(contract.initialPlayer),
+    async create(source: LiveSource, generation: number): Promise<ManagedPlayerResource<Player>> {
       try {
-        player = await contract.createPlayer(source, generation)
-        contract.surface.stage(player)
+        return createResource(await contract.createPlayer(source, generation))
       } catch {
-        if (player !== null) {
-          let cleanupFailed = false
-          try {
-            contract.destroyPlayer(player)
-          } catch {
-            cleanupFailed = true
-          }
-          try {
-            contract.surface.remove(player)
-          } catch {
-            cleanupFailed = true
-          }
-          if (cleanupFailed) {
-            throw new PlayerAdapterError(
-              `${contract.scope}-cleanup-failed`,
-              contract.operations.releaseFailedCandidate,
-            )
-          }
-        }
         throw new PlayerAdapterError(
           `${contract.scope}-create-failed`,
           contract.operations.createCandidate,
         )
       }
-      return player
     },
-    activate(_player: Player, _source: LiveSource): void {},
-    video(player: Player): VideoElementLike {
-      return contract.video(player)
+    activate(resource: ManagedPlayerResource<Player>, _source: LiveSource): void {
+      contract.surface.stage(resource.player)
     },
-    subscribe(player: Player, listener: (event: ResourceEvent) => void): () => void {
-      return contract.subscribe(player, listener)
+    video(resource: ManagedPlayerResource<Player>): VideoElementLike {
+      return contract.video(resource.player)
     },
-    reveal(next: Player, previous: Player): void {
-      contract.surface.reveal(next, previous)
+    subscribe(
+      resource: ManagedPlayerResource<Player>,
+      listener: (event: ResourceEvent) => void,
+    ): () => void {
+      return contract.subscribe(resource.player, listener)
     },
-    release(player: Player): void {
+    reveal(next: ManagedPlayerResource<Player>, previous: ManagedPlayerResource<Player>): void {
+      contract.surface.reveal(next.player, previous.player)
+    },
+    release(resource: ManagedPlayerResource<Player>): void {
       let cleanupFailed = false
-      try {
-        contract.destroyPlayer(player)
-      } catch {
-        cleanupFailed = true
+      if (!resource.destroyed) {
+        try {
+          contract.destroyPlayer(resource.player)
+          resource.destroyed = true
+        } catch {
+          cleanupFailed = true
+        }
       }
-      try {
-        contract.surface.remove(player)
-      } catch {
-        cleanupFailed = true
+      if (!resource.removed) {
+        try {
+          contract.surface.remove(resource.player)
+          resource.removed = true
+        } catch {
+          cleanupFailed = true
+        }
       }
       if (cleanupFailed) {
         throw new PlayerAdapterError(
@@ -101,6 +95,10 @@ export function createManagedPlayerAdapter<Player>(
   }
 
   return createMediaSessionAdapter(driver, options)
+
+  function createResource(player: Player): ManagedPlayerResource<Player> {
+    return { player, destroyed: false, removed: false }
+  }
 }
 
 export type ManagedEventHandler = (...args: readonly unknown[]) => void

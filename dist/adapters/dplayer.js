@@ -7,7 +7,6 @@ export function createDPlayerAdapter(options) {
         scope: 'dplayer',
         operations: {
             createCandidate: 'create a DPlayer candidate',
-            releaseFailedCandidate: 'release a failed DPlayer candidate',
             releaseInstance: 'release a DPlayer instance',
         },
         initialPlayer: options.player,
@@ -23,6 +22,8 @@ export function createDPlayerAdapter(options) {
     }, options);
 }
 function subscribeToDPlayer(player, listener) {
+    const video = player.video;
+    const readyAtSubscription = video.readyState >= 2;
     let disposed = false;
     const forward = (event) => {
         if (!disposed) {
@@ -60,18 +61,20 @@ function subscribeToDPlayer(player, listener) {
         ['error', error],
         ['destroy', externallyDestroyed],
     ];
+    let unsubscribe;
     try {
-        bindManagedEvents('dplayer', 'DPlayer', player, registrations);
+        unsubscribe = bindManagedEvents('dplayer', 'DPlayer', player, registrations);
     }
     catch (bindError) {
         disposed = true;
         throw bindError;
     }
-    if (player.video.readyState >= 2) {
+    if (readyAtSubscription) {
         ready();
     }
     return () => {
         disposed = true;
+        unsubscribe();
     };
 }
 function createDefaultDPlayerSurface(initial) {

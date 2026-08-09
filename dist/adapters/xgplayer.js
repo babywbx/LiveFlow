@@ -8,7 +8,6 @@ export function createXgPlayerAdapter(options) {
         scope: 'xgplayer',
         operations: {
             createCandidate: 'create an XGPlayer candidate',
-            releaseFailedCandidate: 'release a failed XGPlayer candidate',
             releaseInstance: 'release an XGPlayer instance',
         },
         initialPlayer: options.player,
@@ -62,8 +61,9 @@ function subscribeToXgPlayer(player, listener) {
         ['destroy', externallyDestroyed],
     ];
     const media = requireMedia(player);
+    const readyAtSubscription = media.readyState >= 2;
     const unsubscribe = bindManagedEvents('xgplayer', 'XGPlayer', player, registrations);
-    if (media.readyState >= 2) {
+    if (readyAtSubscription) {
         ready();
     }
     return unsubscribe;

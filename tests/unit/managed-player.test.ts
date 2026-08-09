@@ -8,7 +8,7 @@ import {
   type ManagedPlayerSurface,
 } from '../../src/adapters/managed-player.js'
 import type { VideoElementLike } from '../../src/adapters/media-session-adapter.js'
-import type { LiveSource } from '../../src/continuity/types.js'
+import type { LivePlayerAdapter, LiveSource } from '../../src/continuity/types.js'
 
 class EmptyTimeRanges {
   readonly length = 0
@@ -181,9 +181,10 @@ interface FlowLog {
   readonly id: number
 }
 
-function createFlowHarness(options: { stageFails?: boolean } = {}) {
+function createFlowHarness(options: { removeFailsOnce?: boolean; stageFails?: boolean } = {}) {
   const log: FlowLog[] = []
   let nextId = 1
+  let removeFailures = options.removeFailsOnce === true ? 1 : 0
   const initial: FakePlayer = { id: 0, video: new SyntheticVideo() }
   const surface: ManagedPlayerSurface<FakePlayer> = {
     stage(player: FakePlayer): void {
@@ -196,6 +197,10 @@ function createFlowHarness(options: { stageFails?: boolean } = {}) {
       log.push({ action: 'reveal', id: player.id })
     },
     remove(player: FakePlayer): void {
+      if (removeFailures > 0 && player.id !== 0) {
+        removeFailures -= 1
+        throw new Error('Synthetic remove failure.')
+      }
       log.push({ action: 'remove', id: player.id })
     },
   }
@@ -204,7 +209,6 @@ function createFlowHarness(options: { stageFails?: boolean } = {}) {
       scope: 'demo',
       operations: {
         createCandidate: 'create a demo candidate',
-        releaseFailedCandidate: 'release a failed demo candidate',
         releaseInstance: 'release a demo instance',
       },
       initialPlayer: initial,
@@ -230,16 +234,18 @@ function createFlowHarness(options: { stageFails?: boolean } = {}) {
 }
 
 describe('createManagedPlayerAdapter', () => {
-  it('destroys and removes a candidate when staging fails', async () => {
-    const { adapter, log } = createFlowHarness({ stageFails: true })
+  it('retains a staged candidate until failed cleanup can be retried', async () => {
+    const { adapter, log } = createFlowHarness({ stageFails: true, removeFailsOnce: true })
 
     await expect(
       adapter.prepare({ url: 'https://media.invalid/live.m3u8', kind: 'hls' }, 1),
     ).rejects.toThrow(PlayerAdapterError)
     expect(log).toContainEqual({ action: 'destroy', id: 1 })
-    expect(log).toContainEqual({ action: 'remove', id: 1 })
+    expect(log).not.toContainEqual({ action: 'remove', id: 1 })
 
     await adapter.destroy()
+    expect(log.filter((entry) => entry.action === 'destroy' && entry.id === 1)).toHaveLength(1)
+    expect(log).toContainEqual({ action: 'remove', id: 1 })
   })
 
   it('destroys the initial player exactly once across repeated destroys', async () => {
@@ -250,5 +256,51 @@ describe('createManagedPlayerAdapter', () => {
     expect(log.filter((entry) => entry.action === 'destroy')).toEqual([
       { action: 'destroy', id: 0 },
     ])
+  })
+
+  it('shares the cached destroy promise with reentrant cleanup', async () => {
+    const initial: FakePlayer = { id: 0, video: new SyntheticVideo() }
+    const reentrant: Promise<void>[] = []
+    let adapter: LivePlayerAdapter | null = null
+    const liveAdapter = createManagedPlayerAdapter<FakePlayer>(
+      {
+        scope: 'demo',
+        operations: {
+          createCandidate: 'create a demo candidate',
+          releaseInstance: 'release a demo instance',
+        },
+        initialPlayer: initial,
+        surface: {
+          stage(): void {},
+          reveal(): void {},
+          remove(): void {},
+        },
+        createPlayer(): FakePlayer {
+          return { id: 1, video: new SyntheticVideo() }
+        },
+        video(player: FakePlayer): VideoElementLike {
+          return player.video
+        },
+        subscribe(): () => void {
+          return () => {
+            if (adapter !== null) {
+              reentrant.push(adapter.destroy())
+            }
+          }
+        },
+        destroyPlayer(): void {
+          if (adapter !== null) {
+            reentrant.push(adapter.destroy())
+          }
+        },
+      },
+      {},
+    )
+    adapter = liveAdapter
+
+    const destruction = liveAdapter.destroy()
+    await destruction
+
+    expect(reentrant).toEqual([destruction, destruction])
   })
 })

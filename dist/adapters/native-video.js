@@ -6,39 +6,28 @@ export function createNativeVideoAdapter(options) {
     const driver = {
         initialResource: {
             video: options.video,
+            bindingDetached: options.binding === undefined,
+            mediaCleaned: false,
+            removed: false,
             removeOnRelease: false,
         },
         create(_source, _generation) {
             const video = surface.createVideo();
-            try {
-                surface.stage(video);
-            }
-            catch {
-                let cleanupFailed = false;
-                try {
-                    cleanupVideo(video);
-                }
-                catch {
-                    cleanupFailed = true;
-                }
-                try {
-                    surface.remove(video);
-                }
-                catch {
-                    cleanupFailed = true;
-                }
-                throw new PlayerAdapterError(cleanupFailed ? 'native-video-stage-cleanup-failed' : 'native-video-stage-failed', 'stage a video');
-            }
             return Promise.resolve({
                 video,
+                bindingDetached: true,
+                mediaCleaned: false,
+                removed: false,
                 removeOnRelease: true,
             });
         },
         activate(resource, source) {
+            surface.stage(resource.video);
             if (options.crossOrigin !== undefined) {
                 resource.video.crossOrigin = options.crossOrigin;
             }
             if (options.binding !== undefined) {
+                resource.bindingDetached = false;
                 options.binding.attach(resource.video, source);
                 return;
             }
@@ -58,27 +47,38 @@ export function createNativeVideoAdapter(options) {
         },
         release(resource) {
             let cleanupFailed = false;
-            if (options.binding !== undefined) {
+            if (!resource.bindingDetached && options.binding !== undefined) {
                 try {
                     options.binding.detach(resource.video);
+                    resource.bindingDetached = true;
                 }
                 catch {
                     cleanupFailed = true;
                 }
             }
-            try {
-                cleanupVideo(resource.video);
+            else if (options.binding === undefined) {
+                resource.bindingDetached = true;
             }
-            catch {
-                cleanupFailed = true;
-            }
-            try {
-                if (resource.removeOnRelease) {
-                    surface.remove(resource.video);
+            if (!resource.mediaCleaned) {
+                try {
+                    cleanupVideo(resource.video);
+                    resource.mediaCleaned = true;
+                }
+                catch {
+                    cleanupFailed = true;
                 }
             }
-            catch {
-                cleanupFailed = true;
+            if (!resource.removeOnRelease) {
+                resource.removed = true;
+            }
+            else if (!resource.removed) {
+                try {
+                    surface.remove(resource.video);
+                    resource.removed = true;
+                }
+                catch {
+                    cleanupFailed = true;
+                }
             }
             if (cleanupFailed) {
                 throw new PlayerAdapterError('native-video-cleanup-failed', 'release a video');
@@ -88,6 +88,7 @@ export function createNativeVideoAdapter(options) {
     return createMediaSessionAdapter(driver, options);
 }
 function subscribeToVideo(video, listener) {
+    const readyAtSubscription = video.readyState >= 2;
     const ready = () => {
         listener({ type: 'ready' });
     };
@@ -138,7 +139,7 @@ function subscribeToVideo(video, listener) {
         }
         throw new PlayerAdapterError('native-video-subscribe-failed', 'subscribe to video events');
     }
-    if (video.readyState >= 2) {
+    if (readyAtSubscription) {
         ready();
     }
     return () => {

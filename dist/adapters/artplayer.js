@@ -11,63 +11,50 @@ export function createArtPlayerAdapter(options) {
         throw new PlayerAdapterError('artplayer-mutex-failed', 'disable the initial player mutex');
     }
     const driver = {
-        initialResource: options.player,
+        initialResource: createResource(options.player),
         async create(source, generation) {
-            let player = null;
             try {
-                player = await options.createPlayer(source, generation, { mutex: false });
-                player.setMutex(false);
-                surface.stage(player);
+                return createResource(await options.createPlayer(source, generation, { mutex: false }));
             }
             catch {
-                if (player !== null) {
-                    let cleanupFailed = false;
-                    try {
-                        player.destroy();
-                    }
-                    catch {
-                        cleanupFailed = true;
-                    }
-                    try {
-                        surface.remove(player);
-                    }
-                    catch {
-                        cleanupFailed = true;
-                    }
-                    if (cleanupFailed) {
-                        throw new PlayerAdapterError('artplayer-cleanup-failed', 'release a failed ArtPlayer candidate');
-                    }
-                }
                 throw new PlayerAdapterError('artplayer-create-failed', 'create an ArtPlayer candidate');
             }
-            return player;
         },
-        activate(_resource, _source) { },
+        activate(resource, _source) {
+            resource.player.setMutex(false);
+            surface.stage(resource.player);
+        },
         video(resource) {
-            return resource.video;
+            return resource.player.video;
         },
         subscribe(resource, listener) {
-            return subscribeToArtPlayer(resource, listener);
+            return subscribeToArtPlayer(resource.player, listener);
         },
         reveal(next, previous) {
-            surface.reveal(next, previous);
-            visiblePlayer = next;
+            surface.reveal(next.player, previous.player);
+            visiblePlayer = next.player;
         },
         release(resource) {
             let cleanupFailed = false;
-            try {
-                resource.destroy();
+            if (!resource.destroyed) {
+                try {
+                    resource.player.destroy();
+                    resource.destroyed = true;
+                }
+                catch {
+                    cleanupFailed = true;
+                }
             }
-            catch {
-                cleanupFailed = true;
+            if (!resource.removed) {
+                try {
+                    surface.remove(resource.player);
+                    resource.removed = true;
+                }
+                catch {
+                    cleanupFailed = true;
+                }
             }
-            try {
-                surface.remove(resource);
-            }
-            catch {
-                cleanupFailed = true;
-            }
-            if (visiblePlayer === resource) {
+            if (visiblePlayer === resource.player) {
                 visiblePlayer = null;
             }
             if (cleanupFailed) {
@@ -104,6 +91,9 @@ export function createArtPlayerAdapter(options) {
         getMetrics() {
             return adapter.getMetrics();
         },
+        seek(seconds) {
+            adapter.seek?.(seconds);
+        },
         subscribe(listener) {
             return adapter.subscribe(listener);
         },
@@ -114,8 +104,13 @@ export function createArtPlayerAdapter(options) {
             return visiblePlayer?.overlayContainer ?? options.overlayContainer ?? null;
         },
     };
+    function createResource(player) {
+        return { player, destroyed: false, removed: false };
+    }
 }
 function subscribeToArtPlayer(player, listener) {
+    const video = player.video;
+    const readyAtSubscription = video.readyState >= 2;
     const ready = () => {
         listener({ type: 'ready' });
     };
@@ -171,7 +166,7 @@ function subscribeToArtPlayer(player, listener) {
         }
         throw new PlayerAdapterError('artplayer-subscribe-failed', 'subscribe to ArtPlayer events');
     }
-    if (player.video.readyState >= 2) {
+    if (readyAtSubscription) {
         ready();
     }
     return () => {

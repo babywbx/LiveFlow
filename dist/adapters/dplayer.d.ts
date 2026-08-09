@@ -5,6 +5,7 @@ export interface DPlayerLike {
     readonly video: VideoElementLike;
     readonly container?: HTMLElement;
     on(event: string, handler: (...args: readonly unknown[]) => void): void;
+    off?(event: string, handler: (...args: readonly unknown[]) => void): void;
     destroy(): void;
 }
 export interface DPlayerSurface {
