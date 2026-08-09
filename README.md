@@ -223,22 +223,22 @@ overlay.submit({
 | 子路径                             | 内容                                     |   gzip | 预算 |
 | ---------------------------------- | ---------------------------------------- | -----: | ---: |
 | `@babywbx/liveflow`                | `CONTRACT_VERSION`、共享类型与类型化错误 |      — |    — |
-| `@babywbx/liveflow/continuity`     | 连续性控制器与播放器 adapter 契约        | 4.7 KB | 6 KB |
-| `@babywbx/liveflow/danmaku`        | 有界弹幕调度核心                         | 4.9 KB | 7 KB |
-| `@babywbx/liveflow/danmaku/dom`    | 安全结构化 DOM renderer 与颜色工具       | 2.8 KB | 4 KB |
-| `@babywbx/liveflow/overlay`        | 实时事件引擎与共享预算协调器             | 5.6 KB | 8 KB |
-| `@babywbx/liveflow/overlay/banner` | 事件横幅呈现器（可选，按需加载）         | 4.0 KB | 5 KB |
-| `@babywbx/liveflow/chrome`         | 播放器控件显隐控制器（空闲隐藏与常驻）   | 1.4 KB | 2 KB |
+| `@babywbx/liveflow/continuity`     | 连续性控制器与播放器 adapter 契约        | 5.9 KB | 6 KB |
+| `@babywbx/liveflow/danmaku`        | 有界弹幕调度核心                         | 5.6 KB | 7 KB |
+| `@babywbx/liveflow/danmaku/dom`    | 安全结构化 DOM renderer 与颜色工具       | 3.1 KB | 4 KB |
+| `@babywbx/liveflow/overlay`        | 实时事件引擎与共享预算协调器             | 6.2 KB | 8 KB |
+| `@babywbx/liveflow/overlay/banner` | 事件横幅呈现器（可选，按需加载）         | 4.3 KB | 5 KB |
+| `@babywbx/liveflow/chrome`         | 播放器控件显隐控制器（空闲隐藏与常驻）   | 1.5 KB | 2 KB |
 | `@babywbx/liveflow/multiview`      | 多路宫格布局数学与网格轨道声明           | 0.9 KB | 2 KB |
-| `@babywbx/liveflow/native-video`   | 原生 `<video>` adapter                   | 3.0 KB | 4 KB |
+| `@babywbx/liveflow/native-video`   | 原生 `<video>` adapter                   | 3.6 KB | 4 KB |
 | `@babywbx/liveflow/page-activity`  | 页面可见性来源（省电暂停续播）           | 0.5 KB | 2 KB |
-| `@babywbx/liveflow/artplayer`      | 零静态播放器依赖的 ArtPlayer-like seam   | 3.0 KB | 4 KB |
-| `@babywbx/liveflow/dplayer`        | 零静态播放器依赖的 DPlayer-like seam     | 3.0 KB | 4 KB |
-| `@babywbx/liveflow/videojs`        | 零静态播放器依赖的 Video.js-like seam    | 3.2 KB | 4 KB |
-| `@babywbx/liveflow/xgplayer`       | 零静态播放器依赖的 XGPlayer-like seam    | 3.0 KB | 4 KB |
+| `@babywbx/liveflow/artplayer`      | 零静态播放器依赖的 ArtPlayer-like seam   | 3.6 KB | 4 KB |
+| `@babywbx/liveflow/dplayer`        | 零静态播放器依赖的 DPlayer-like seam     | 3.5 KB | 4 KB |
+| `@babywbx/liveflow/videojs`        | 零静态播放器依赖的 Video.js-like seam    | 3.7 KB | 4 KB |
+| `@babywbx/liveflow/xgplayer`       | 零静态播放器依赖的 XGPlayer-like seam    | 3.5 KB | 4 KB |
 
 体积由 `pnpm size:check` 压缩后 gzip 实测，超过预算列即 CI 失败。四个核心子路径合并实测
-15.7 KB，冻结上限 20 KB。
+18.5 KB，冻结上限 20 KB。
 
 <div align="right">
 
@@ -254,7 +254,7 @@ overlay.submit({
 import { CONTRACT_VERSION, LiveFlowError } from '@babywbx/liveflow'
 ```
 
-`CONTRACT_VERSION` 当前为 `1`。每个引擎工厂都接收它，创建时不匹配立即抛出
+`CONTRACT_VERSION` 当前为 `2`。每个引擎工厂都接收它，创建时不匹配立即抛出
 `ContractVersionMismatchError`，运行时不做任何兼容猜测。
 
 根入口同时导出 `Clock`、`Destroyable` / `AsyncDestroyable`、`DiagnosticEvent` 和共享错误类：
@@ -303,15 +303,29 @@ interface ContinuityController {
 | `clock`             | `Clock`                     | 否   | 单调时钟，省略时使用浏览器时钟        |
 | `policy`            | `Partial<ContinuityPolicy>` | 否   | 覆盖保守默认策略                      |
 | `onRecoveryRequest` | `(request) => void`         | 否   | 请求调用方解析并提交新源              |
+| `pageActivity`      | `PageActivitySource`        | 否   | 页面恢复可见时重试被浏览器拒绝的播放  |
 | `onDiagnostic`      | `(event) => void`           | 否   | 接收有速率限制的结构化诊断            |
 
-`setSource()` 先让 generation 加一，再依次执行 `prepare()` → `commit()` → `play()`，并等待本代的
-`first-frame` 事件。返回的 Promise 在 `play()` 完成后结束，不等待首帧。整段预热共享同一个
+`setSource()` 先让 generation 加一，再依次执行 `prepare()` → `commit()` → `play()`。控制器
+随后等待本代的 `first-frame` 事件进入健康状态，但返回的 Promise 在 `play()` 完成后结束，
+不等待首帧。整段预热共享同一个
 `sourceWarmupTimeoutMs` 超时；迟到的 prepared source 会被 discard，永远无法提交。
 
-`getSnapshot()` 返回 `{ state, generation, automaticRecoveryCount }`，刻意不包含媒体 URL，避免
-签名参数泄露进 UI 状态或诊断。`subscribe()` 最多保留 32 个不同 listener，超出抛出
-`CapacityExceededError`；listener 抛错不会改变控制器状态。
+`getSnapshot()` 返回全部连续性状态字段：
+
+```ts
+interface ContinuitySnapshot {
+  readonly state: ContinuityState
+  readonly generation: number
+  readonly automaticRecoveryCount: number
+  readonly healthySince: number | null
+  readonly suspension: PlaybackSuspension | null
+}
+```
+
+`healthySince` 是当前健康连播开始时的单调时钟读数；`suspension` 记录浏览器省电暂停或自动
+播放拦截。快照刻意不包含媒体 URL，避免签名参数泄露进 UI 状态或诊断。`subscribe()` 最多
+保留 32 个不同 listener，超出抛出 `CapacityExceededError`；listener 抛错不会改变控制器状态。
 
 | 状态             | 含义                                            |
 | ---------------- | ----------------------------------------------- |
@@ -322,6 +336,7 @@ interface ContinuityController {
 | `degraded`       | 检测到 waiting、stall、错误或持续高尾距         |
 | `recovering`     | 已发出一次有界恢复请求                          |
 | `waiting-reopen` | 自动恢复耗尽、不可恢复，或没有可用恢复 listener |
+| `suspended`      | 浏览器省电暂停或自动播放策略拒绝播放            |
 | `stopped`        | 控制器已销毁                                    |
 
 > \[!NOTE\]
@@ -346,12 +361,16 @@ interface LivePlayerAdapter {
   getMetrics(): PlaybackMetrics
   subscribe(listener: PlaybackEventListener): () => void
   destroy(): Promise<void>
+  seek?(seconds: number): void
 }
 ```
 
 适配器必须遵守：`prepare()` 不替换当前可见媒体；`commit()` 用传入 generation 拒绝过期提交；先
 原子显示候选实例，**再**发出 `first-frame`；`discard()` 与 `destroy()` 幂等；每个 `PlaybackEvent`
 都带产生它的 generation；错误中不出现完整签名 URL、Cookie 或 token。
+
+`seek(seconds)` 是可选能力。`PlaybackMetrics.strandedGapSeconds` 也是可选字段，表示播放头到
+下一段缓冲起点的距离；无法可靠提供 seek 或空洞指标时应省略，而不是伪造健康值。
 
 库内提供五个实现：
 
@@ -364,9 +383,12 @@ import { createXgPlayerAdapter } from '@babywbx/liveflow/xgplayer'
 ```
 
 `createNativeVideoAdapter({ video })` 在同一父节点创建隐藏候选 video，复制 `controls`、
-`playsInline` 和 `className`，首帧时交换可见性 —— 浏览器支持 `requestVideoFrameCallback` 时使用
+`playsInline` 和 `className`，首帧时交换可见性。浏览器支持 `requestVideoFrameCallback` 时使用
 真实帧回调，否则退回 `playing` 事件。候选实例在交接前始终静音，避免新旧实例同时出声。调用方
-保留传入节点的 DOM 所有权，适配器创建的节点则一律由适配器删除。
+保留传入节点的 DOM 所有权，适配器创建的节点则一律由适配器删除。通过可选 `binding` 可以让
+调用方用 `NativeVideoSourceBinding.attach()` / `detach()` 接管 MSE 等自定义取源生命周期。
+`NativeVideoAdapterOptions` 的 `video` 必填，`surface`、`binding`、`crossOrigin`、`now` 与
+`onDiagnostic` 均可选；完整契约见[播放器适配器](./docs/reference/adapters.md)。
 
 `createArtPlayerAdapter({ player, createPlayer })` 不静态导入任何播放器包。调用方提供一个很小的
 `ArtPlayerLike` 包装（底层 `video`、`on` / `off`、`setMutex(false)`、`destroy()`，以及可选的
@@ -374,7 +396,8 @@ import { createXgPlayerAdapter } from '@babywbx/liveflow/xgplayer'
 
 `createDPlayerAdapter`、`createVideoJsAdapter` 与 `createXgPlayerAdapter` 采用同样的包装模式：
 只依赖结构化的 `*Like` 接口与候选实例工厂，不静态导入任何播放器包。DPlayer seam 兼容其没有
-`off` 的事件系统；Video.js seam 通过 `el()` 解析底层媒体元素并容忍 `dispose()` 自删 DOM；
+`off` 的事件系统，也会在包装提供可选 `off` 时主动退订；Video.js seam 通过 `el()` 解析底层
+媒体元素并容忍 `dispose()` 自删 DOM；
 XGPlayer seam 按 `media`、`video` 顺序解析媒体元素并以 `root` 作为默认容器。
 
 全部适配器都支持注入自定义 surface，其 `reveal` 必须同步且原子。参考：
@@ -410,8 +433,16 @@ interface DanmakuMessage {
   color?: string
   sender?: { displayName?: string }
   identities?: readonly DanmakuIdentity[]
-  metadata?: Readonly<Record<string, unknown>>
+  metadata?: DanmakuMetadata
 }
+
+interface DanmakuMetadata {
+  readonly entries: readonly DanmakuMetadataEntry[]
+}
+
+type DanmakuMetadataEntry = readonly [string, DanmakuMetadataValue]
+type DanmakuMetadataValue =
+  number | string | boolean | null | readonly DanmakuMetadataValue[] | DanmakuMetadata
 
 interface DanmakuIdentity {
   kind: string
@@ -425,6 +456,10 @@ interface DanmakuIdentity {
 `kind`、`variant` 和 `assetKey` 都是调用方定义、无平台语义的字符串。多个身份保持独立节点；引擎
 不会从一种身份推断另一种，也不会让身份等级改变整条正文的颜色。正文颜色只接受 `#rgb` 或
 `#rrggbb`。
+
+`metadata` 使用显式的递归 `entries` 列表。每层 `entries` 与数组的 `length` 都能在读取子项前
+检查，因此引擎无需全量枚举调用方的任意对象。值只允许有限数、字符串、布尔值、`null`、数组和
+嵌套的 `DanmakuMetadata`。
 
 `push()` 同步校验并复制输入。`accepted: true` 只表示消息进入有界等待队列，不保证一定展示 ——
 它仍可能过期或始终等不到可用轨道。结构性错误抛出 `InvalidDanmakuMessageError`；正文超长则以
@@ -595,12 +630,19 @@ const tracks = multiviewGridTracks(spec) // { gridTemplateColumns, gridTemplateR
 
 **连续性策略** —— `DEFAULT_CONTINUITY_POLICY`：
 
-| 字段                          | 默认值 | 字段                     |  默认值 |
-| ----------------------------- | -----: | ------------------------ | ------: |
-| `targetLatencySeconds`        |    `2` | `recoveryCooldownMs`     | `30000` |
-| `softCatchupThresholdSeconds` |  `0.6` | `sourceWarmupTimeoutMs`  |  `8000` |
-| `hardResyncThresholdSeconds`  |    `8` | `reopenGraceMs`          | `90000` |
-| `catchupRate`                 | `1.04` | `maxAutomaticRecoveries` |     `4` |
+| 字段                          |  默认值 |
+| ----------------------------- | ------: |
+| `targetLatencySeconds`        |     `2` |
+| `softCatchupThresholdSeconds` |   `0.6` |
+| `hardResyncThresholdSeconds`  |     `8` |
+| `maxPlausibleLiveEdgeSeconds` |  `3600` |
+| `catchupRate`                 |  `1.04` |
+| `recoveryCooldownMs`          | `30000` |
+| `sourceWarmupTimeoutMs`       |  `8000` |
+| `maxAutomaticRecoveries`      |     `4` |
+| `maxGapJumpSeconds`           |    `30` |
+| `stallNudgeSeconds`           |   `0.1` |
+| `maxStallSeeksPerSource`      |     `3` |
 
 **弹幕上限与调度策略** —— `DEFAULT_DANMAKU_LIMITS`、`DEFAULT_DANMAKU_POLICY`：
 
@@ -615,8 +657,8 @@ const tracks = multiviewGridTracks(spec) // { gridTemplateColumns, gridTemplateR
 | `maxIntakePerSecond`  |  `120` | `duplicateWindowMs`     |      `500` |
 | `maxDisplayPerSecond` |   `60` | `frameBudgetMs`         |        `8` |
 
-`metadata` 另外受 `maxMetadataKeys`（`16`）、`maxMetadataDepth`（`2`）和 `maxMetadataBytes`
-（`2048`）约束。
+`metadata` 的 entries 与数组元素共用 `maxMetadataKeys`（`16`）预算，另外受
+`maxMetadataDepth`（`2`）和 `maxMetadataBytes`（`2048`）约束。
 
 **实时事件上限** —— `DEFAULT_OVERLAY_LIMITS`：
 
@@ -642,9 +684,9 @@ const tracks = multiviewGridTracks(spec) // { gridTemplateColumns, gridTemplateR
 **Generation 门禁。** 每次换源生成新 generation。旧 generation 的 promise、事件和计时器不得改变
 当前状态；适配器还必须在自己的 `commit()` seam 拒绝过期提交，防止已经开始的旧交接覆盖新媒体。
 
-**可证明的有界性。** 等待队列、可见集合、DOM 节点池、文本长度、徽章数、metadata 键数与深度、
-每帧挂载数、收发速率和实例注册表都有固定上限。过载时按优先级丢弃 —— 绝不通过扩大队列来「保全」
-所有消息。
+**可证明的有界性。** 等待队列、可见集合、DOM 节点池、文本长度、徽章数、metadata entries、
+数组元素与深度、每帧挂载数、收发速率和实例注册表都有固定上限。过载时按优先级丢弃 —— 绝不
+通过扩大队列来「保全」所有消息。
 
 **失败必须响。** 无法解析、越界和契约不匹配一律抛类型化错误，不会静默降级成看起来正常的空结果；
 渲染失败通过 `onError` 和指标上报，不会被计成一次成功展示。
@@ -727,23 +769,24 @@ const tracks = multiviewGridTracks(spec) // { gridTemplateColumns, gridTemplateR
 
 ## 🛠 开发
 
-需要 Node.js `>=22.5.0` 与 pnpm `11.16.0`。
+需要 Node.js `>=22.13.0` 与 pnpm `11.16.0`。
 
-| 目的           | 命令                                     |
-| -------------- | ---------------------------------------- |
-| 全量校验       | `pnpm check`                             |
-| 类型检查       | `pnpm typecheck`                         |
-| 格式化         | `pnpm format` / `pnpm format:check`      |
-| Lint           | `pnpm lint`                              |
-| 单元与集成测试 | `pnpm test`                              |
-| 浏览器测试     | `pnpm test:browser`                      |
-| 耐久测试       | `SOAK_DURATION_MS=300000 pnpm test:soak` |
-| 构建产物       | `pnpm build`                             |
-| 体积预算       | `pnpm size:check`                        |
+| 目的               | 命令                                |
+| ------------------ | ----------------------------------- |
+| 全量校验           | `pnpm check`                        |
+| 类型检查           | `pnpm typecheck`                    |
+| 格式化             | `pnpm format` / `pnpm format:check` |
+| Lint               | `pnpm lint`                         |
+| 单元与集成测试     | `pnpm test`                         |
+| 浏览器测试         | `pnpm test:browser`                 |
+| 加速合成耐久测试   | `pnpm test:soak`                    |
+| Tarball 消费者验证 | `pnpm consumer:check`               |
+| 构建产物           | `pnpm build`                        |
+| 体积预算           | `pnpm size:check`                   |
 
-`pnpm check` 聚合格式检查、类型检查、lint、文档链接检查、测试、构建、体积预算和示例构建，是事实上
-的 CI 门禁，每次提交前必须本地跑通。由于 `dist/` 随仓库分发，改动 `src/` 后必须重新构建，并把
-产物一起提交。
+`pnpm check` 聚合格式检查、类型检查、lint、文档链接检查、测试、加速合成耐久测试、构建、体积
+预算、示例构建和 tarball 空白消费者验证，是事实上的 CI 门禁，每次提交前必须本地跑通。由于
+`dist/` 随仓库分发，改动 `src/` 后必须重新构建，并把产物一起提交。
 
 示例工程只读取本地媒体文件并生成合成消息，不上传所选文件，也不连接任何直播平台：
 
@@ -854,5 +897,5 @@ Copyright © 2026-present [Babywbx][profile-link].<br/>
 [github-stars-link]: https://github.com/babywbx/LiveFlow/stargazers
 [github-stars-shield]: https://img.shields.io/github/stars/babywbx/LiveFlow?color=ffcb47&labelColor=black&style=flat-square
 [node-link]: https://github.com/babywbx/LiveFlow/blob/main/package.json
-[node-shield]: https://img.shields.io/badge/node-%3E%3D22.5.0-369eff?labelColor=black&style=flat-square
+[node-shield]: https://img.shields.io/badge/node-%3E%3D22.13.0-369eff?labelColor=black&style=flat-square
 [profile-link]: https://github.com/babywbx

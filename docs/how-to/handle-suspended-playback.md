@@ -49,7 +49,9 @@ if (snapshot.suspension?.reason === 'autoplay-blocked') {
 }
 ```
 
-`resume()` 在非挂起状态下是空操作；仍被拒绝则保持挂起，等待下一次机会。
+`resume()` 在非挂起状态下是空操作；浏览器仍以 `AbortError` / `NotAllowedError` 拒绝时保持
+挂起，等待下一次机会。其他播放失败会抛出脱敏的 `SourceTransitionError`，应按真实媒体故障
+处理。
 
 ## 不要把挂起当失败
 

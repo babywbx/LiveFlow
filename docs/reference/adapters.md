@@ -36,6 +36,20 @@ Video.js-like 与 XGPlayer-like。它们实现相同的 `LivePlayerAdapter` 接�
 ## 原生 video
 
 ```ts
+interface NativeVideoAdapterOptions extends EngineHooks {
+  readonly video: VideoElementLike
+  readonly surface?: NativeVideoSurface
+  readonly binding?: NativeVideoSourceBinding
+  readonly crossOrigin?: 'anonymous' | 'use-credentials'
+  readonly now?: () => number
+}
+```
+
+`video` 是当前可见实例。`surface` 覆盖候选节点的创建与交接；`binding` 接管每个候选的媒体
+挂接；`crossOrigin` 在挂接媒体前写入候选；`now` 提供单调时间；`onDiagnostic` 来自
+`EngineHooks`。
+
+```ts
 import { createNativeVideoAdapter } from '@babywbx/liveflow/native-video'
 
 const video = document.querySelector<HTMLVideoElement>('[data-live-video]')
@@ -51,6 +65,20 @@ const adapter = createNativeVideoAdapter({
 
 默认 DOM surface 要求传入的 video 已挂载到文档中。适配器会在同一父节点创建隐藏的候选
 video，复制 `controls`、`playsInline` 和 `className`，首帧时交换可见性。
+
+### 自定义 source binding
+
+```ts
+interface NativeVideoSourceBinding {
+  attach(video: VideoElementLike, source: LiveSource): void
+  detach(video: VideoElementLike): void
+}
+```
+
+提供 `binding` 后，适配器不再把 `source.url` 写入 `video.src`，而是在候选激活时调用
+`attach()`。一旦开始 attach，候选被丢弃、替换、挂接失败或适配器销毁时都会调用
+`detach()`，随后仍会清空 video 媒体资源。`detach()` 必须幂等，也必须能处理 attach 尚未
+完成就抛错的候选。
 
 调用方保留传入 video 的 DOM 所有权：
 
@@ -167,11 +195,12 @@ const adapter = createDPlayerAdapter({
 
 - 底层 `video`（原生媒体元素）；
 - `on` 事件订阅；
+- 可选 `off` 事件退订；
 - `destroy()`；
 - 可选 `container`。
 
-DPlayer 的事件系统没有 `off`。适配器通过内部失效标志停止转发已退订的事件，实例被
-`destroy()` 后监听器随实例一起回收，因此销毁后不会有事件继续影响适配器状态。
+提供 `off` 时适配器会主动退订全部 listener；没有 `off` 时通过内部失效标志停止转发，实例被
+`destroy()` 后监听器随实例一起回收。因此两种接口形状在销毁后都不会继续影响适配器状态。
 
 ### DPlayer-like 事件映射
 
@@ -269,7 +298,10 @@ const adapter = createXgPlayerAdapter({
 - `liveEdgeDistanceSeconds`：最后一个缓冲区间末尾与当前位置的距离；
 - `playbackRate`：当前播放速度；
 - `stalledSince`：本实例最后一次进入 `waiting` / `stalled` 的单调时钟时间；
-- `droppedFrames`：`getVideoPlaybackQuality()` 可用时的累计丢帧数，否则为 `null`。
+- `droppedFrames`：`getVideoPlaybackQuality()` 可用时的累计丢帧数，否则为 `null`；
+- `strandedGapSeconds`：播放头不在任一缓冲段时，到下一段起点的距离；没有空洞时省略。
+
+内置适配器实现可选的 `seek(seconds)`，控制器可在换源前尝试跳过缓冲空洞或小幅推进播放头。
 
 ## 浏览器基线
 

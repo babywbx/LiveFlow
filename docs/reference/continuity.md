@@ -41,6 +41,7 @@ const controller = createContinuityController({
 | `clock`             | `Clock`                     | 否   | 单调时钟；省略时使用浏览器时钟           |
 | `policy`            | `Partial<ContinuityPolicy>` | 否   | 覆盖保守默认策略                         |
 | `onRecoveryRequest` | `(request) => void`         | 否   | 请求调用方解析并提交新源                 |
+| `pageActivity`      | `PageActivitySource`        | 否   | 页面恢复可见时重试被浏览器拒绝的播放     |
 | `onDiagnostic`      | `(event) => void`           | 否   | 接收有速率限制的结构化诊断               |
 
 省略 `onRecoveryRequest` 不会静默停在 `recovering`。需要恢复时，控制器会发出
@@ -101,13 +102,15 @@ type PlaybackSuspensionReason = 'browser-suspended' | 'autoplay-blocked'
 
 ### `resume()`
 
-在 `suspended` 状态下重试 `play()`。不处于挂起状态时是空操作。仍被拒绝则保持挂起，
-等待下一次可见性变化或 `resume()`。
+在 `suspended` 状态下重试 `play()`。不处于挂起状态时是空操作。浏览器仍以
+`AbortError` / `NotAllowedError` 拒绝时保持挂起，等待下一次可见性变化或 `resume()`；其他
+失败抛出脱敏的 `SourceTransitionError`。页面可见性触发的自动重试若遇到其他失败，则离开
+挂起状态并进入有界恢复流程。
 
 ### `cancelRecovery(generation)`
 
-撤回一次恢复请求：调用方查完发现这一路不需要换源时调用它，把这次恢复占用的次数还回去，
-并清掉控制器级冷却。同时丢弃当前尚未发出的待发恢复。
+撤回一次已经发出的恢复请求：调用方查完发现这一路不需要换源时调用它，把这次恢复占用的
+次数还回去，并清掉控制器级冷却。如果同一代际同时已有下一次待发恢复，也一并丢弃。
 
 只在**调用方决定不响应**这次请求时调用。正常响应恢复请求的方式仍然是 `setSource()`，
 计数会在替换源产生首帧时清零，两条路径不要混用。
@@ -124,9 +127,10 @@ type PlaybackSuspensionReason = 'browser-suspended' | 'autoplay-blocked'
 
 ### `destroy()`
 
-停止控制器，取消全部计时器、退订 adapter 事件并销毁 adapter。重复调用返回同一个
-Promise。清理步骤会尽最大努力全部执行；任一步失败时，完成其余清理后抛出脱敏的
-`LiveFlowError`，错误码为 `controller-cleanup-failed`。
+停止控制器，取消全部计时器、退订 adapter 事件并销毁 adapter。并发调用返回同一个进行中的
+Promise；成功后重复调用安全。清理步骤会尽最大努力全部执行；任一步失败时，完成其余清理后
+抛出带 `controller-cleanup-failed` 的脱敏 `LiveFlowError`，下一次 `destroy()` 会重试未完成的
+清理。
 
 ## 状态
 
@@ -159,6 +163,7 @@ interface LivePlayerAdapter {
   getMetrics(): PlaybackMetrics
   subscribe(listener: PlaybackEventListener): () => void
   destroy(): Promise<void>
+  seek?(seconds: number): void
 }
 ```
 
@@ -191,6 +196,7 @@ interface PlaybackMetrics {
   playbackRate: number
   stalledSince: number | null
   droppedFrames: number | null
+  strandedGapSeconds?: number | null
 }
 ```
 
@@ -214,14 +220,12 @@ interface PlaybackMetrics {
 | `catchupRate`                 |  `1.04` |
 | `recoveryCooldownMs`          | `30000` |
 | `sourceWarmupTimeoutMs`       |  `8000` |
-| `reopenGraceMs`               | `90000` |
 | `maxAutomaticRecoveries`      |     `4` |
 | `maxGapJumpSeconds`           |    `30` |
 | `stallNudgeSeconds`           |   `0.1` |
 | `maxStallSeeksPerSource`      |     `3` |
 
-非法数值或互相矛盾的阈值会在创建时抛出
-`InvalidContinuityPolicyError`。`reopenGraceMs` 已进入契约，但当前连续性 MVP 不负责把
+非法数值或互相矛盾的阈值会在创建时抛出 `InvalidContinuityPolicyError`。连续性状态不负责把
 平台状态判定为离线；调用方仍拥有最终离线展示时机。
 
 `maxPlausibleLiveEdgeSeconds` 是尾距的可信上界，必须大于 `hardResyncThresholdSeconds`。
@@ -242,9 +246,9 @@ interface PlaybackMetrics {
 - **段内冻结**：播放头仍在有效缓冲段内、前方也有数据却不前进时，推进
   `stallNudgeSeconds`。
 
-每个源最多尝试 `maxStallSeeksPerSource` 次，用尽后按原路径请求恢复。解救成功后流自身的
-`playing` 事件会取消待发的恢复请求；没能救活则在下一个防抖窗口继续，直到次数耗尽。
-适配器未实现 `seek` 时该机制整体跳过，行为与之前一致。
+每个源最多尝试 `maxStallSeeksPerSource` 次，用尽后按原路径请求恢复。每个防抖窗口都会重新
+读取指标；`latency` 已低于硬阈值时直接恢复监控，流自身的 `playing` 事件也会取消待发请求。
+没能救活则继续到次数耗尽。适配器未实现 `seek` 时该机制整体跳过，行为与之前一致。
 
 ## 恢复请求
 
@@ -279,13 +283,14 @@ interface ContinuityRecoveryRequest {
 | `PreparedSourceGenerationMismatchError`         | adapter 返回了错误 generation                 |
 | `InvalidPlaybackMetricsError`                   | adapter 返回了非法播放指标                    |
 | `CapacityExceededError`                         | listener 或内部时钟句柄达到固定上限           |
+| `LiveFlowError` / `controller-destroyed`        | 销毁期间或销毁后调用需要活动状态的方法        |
 | `LiveFlowError` / `playback-rate-update-failed` | adapter 拒绝播放速度更新                      |
 | `LiveFlowError` / `controller-cleanup-failed`   | 销毁期间有 adapter 清理失败                   |
 
 `SourceTransitionError` 暴露 phase、generation 和脱敏后的 `reason`，不保留上游 `cause`，
-也不包含 `LiveSource.url`。`reason` 只取上游错误的类名（如 `NotSupportedError`），且必须
-匹配 `/^[A-Za-z]{1,64}$/`，否则记为 `unknown` —— 上游 `message` 可能内嵌签名 URL，永远
-不会传播。
+也不包含 `LiveSource.url`。`reason` 只保留固定安全 allowlist 中的错误名（如
+`NotSupportedError`），其余统一记为 `unknown`；完整名单见[错误类型](./errors.md)。上游
+`message` 可能内嵌签名 URL，永远不会传播。
 
 被判定为挂起的 `AbortError` 与 `NotAllowedError` 不再抛 `SourceTransitionError`，改为进入
 `suspended` 状态。
@@ -297,6 +302,10 @@ interface ContinuityRecoveryRequest {
 - `stale-playback-event`
 - `prepared-source-discarded`
 - `prepared-source-cleanup-failed`
+- `playback-suspended`
+- `playback-resume-failed`
+- `page-activity-subscribe-failed`
+- `page-activity-unsubscribe-failed`
 - `stall-detected`
 - `stall-seek`
 - `implausible-live-edge`

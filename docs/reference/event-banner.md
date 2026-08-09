@@ -231,6 +231,7 @@ interface BannerImageElement extends BannerElement {
 
 超出 `maxActiveBanners` 或 `maxTextLength` 硬上限的配置在创建时抛出
 `InvalidOverlayConfigurationError`，不会被悄悄夹到上限值。
+上游原始文本也会在空白归一化前检查 `maxTextLength`，因此超长输入不会进入文本测量或挂载。
 
 ## 动画与无障碍
 
@@ -244,7 +245,10 @@ interface BannerImageElement extends BannerElement {
 ## `destroy()`
 
 取消所有待处理帧、卸载所有活动横幅、拒绝后续 `present()`。重复调用安全。销毁后调用
-`present()` 抛出 `OverlayDestroyedError`。
+`present()` 抛出 `OverlayDestroyedError`。单个 frame 或节点清理失败不会中断其余横幅；全部
+尝试完成后统一抛出 `OverlayCleanupError`。单横幅 handle 的失败步骤可以重试，已完成步骤
+不会重复执行。完整横幅的图片请求与 error listener 也由同一 handle 持有，并在根节点之前
+释放。
 
 渲染面由调用方拥有，呈现器只移除自己创建的节点，不会清空容器。
 
@@ -255,6 +259,7 @@ interface BannerImageElement extends BannerElement {
 | `InvalidOverlayConfigurationError` | 布局、上限、测量结果或渲染面元素非法               |
 | `InvalidOverlayEventError`         | 内容文本、标签或素材键为空、超长                   |
 | `OverlayDestroyedError`            | 销毁后继续调用 `present()`                         |
+| `OverlayCleanupError`              | frame 或节点清理未完整成功                         |
 | `AssetResolutionError`             | 素材解析或加载失败，经 `onAssetError` 报告而非抛出 |
 
 错误信息只包含字段名与素材键，不包含横幅文本、完整素材 URL、Cookie 或 token。

@@ -67,8 +67,16 @@ interface DanmakuMessage {
     displayName?: string
   }
   identities?: readonly DanmakuIdentity[]
-  metadata?: Readonly<Record<string, unknown>>
+  metadata?: DanmakuMetadata
 }
+
+interface DanmakuMetadata {
+  readonly entries: readonly DanmakuMetadataEntry[]
+}
+
+type DanmakuMetadataEntry = readonly [string, DanmakuMetadataValue]
+type DanmakuMetadataValue =
+  number | string | boolean | null | readonly DanmakuMetadataValue[] | DanmakuMetadata
 
 interface DanmakuIdentity {
   kind: string
@@ -101,9 +109,11 @@ interface DanmakuIdentity {
 
 身份数量超过 `maxBadgesPerMessage` 时稳定保留最前面的身份，其余身份被省略并产生诊断。
 
-`metadata` 只允许有限数、字符串、布尔值、`null`、数组和普通记录。引擎递归复制并检查：
+`metadata` 用显式的 `entries` 数组表示记录。每层 `entries` 与值数组的 `length` 都能在读取
+子项前与剩余预算比较，因此引擎不会全量枚举调用方的任意对象。值只允许有限数、字符串、
+布尔值、`null`、数组和嵌套的 `DanmakuMetadata`。引擎递归复制并检查：
 
-- 总键数；
+- entries 与数组元素总数（共用 `maxMetadataKeys`）；
 - 最大嵌套深度；
 - UTF-8 JSON 字节数。
 

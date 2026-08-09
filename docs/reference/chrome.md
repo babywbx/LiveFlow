@@ -113,7 +113,9 @@ interface ChromeVisibilitySnapshot {
 ## `destroy()`
 
 取消待触发的隐藏计时器，清空 `pin` 计数、焦点与指针状态，向仍在订阅的 listener 发出最后
-一次 `{ visible: false }`，然后清空订阅表。重复调用安全。
+一次 `{ visible: false }`，然后清空订阅表。计时器取消失败也不阻止其余状态收口；失败的
+handle 会保留供下一次 `destroy()` 重试，并抛出带 `chrome-visibility-cleanup-failed` 的
+`LiveFlowError`。清理完成后重复调用安全。
 
 销毁后 `getSnapshot()` 仍可读且恒为 `{ visible: false }`；其余方法一律抛出
 `ChromeVisibilityDestroyedError`，不会静默忽略。
@@ -132,12 +134,13 @@ interface ChromeVisibilitySnapshot {
 
 ## 错误
 
-| 错误                                        | 条件                           |
-| ------------------------------------------- | ------------------------------ |
-| `InvalidChromeVisibilityConfigurationError` | `idleHideMs` 不是有限正数      |
-| `CapacityExceededError`                     | listener 或 `pin` 深度达到上限 |
-| `ChromeVisibilityPinUnderflowError`         | `unpin()` 没有配对的 `pin()`   |
-| `ChromeVisibilityDestroyedError`            | 销毁后继续发送信号或订阅       |
+| 错误                                                 | 条件                           |
+| ---------------------------------------------------- | ------------------------------ |
+| `InvalidChromeVisibilityConfigurationError`          | `idleHideMs` 不是有限正数      |
+| `CapacityExceededError`                              | listener 或 `pin` 深度达到上限 |
+| `ChromeVisibilityPinUnderflowError`                  | `unpin()` 没有配对的 `pin()`   |
+| `ChromeVisibilityDestroyedError`                     | 销毁后继续发送信号或订阅       |
+| `LiveFlowError` / `chrome-visibility-cleanup-failed` | 隐藏计时器取消失败             |
 
 全部错误继承 `LiveFlowError`，带稳定 `code`。完整错误表见[错误类型](./errors.md)。
 

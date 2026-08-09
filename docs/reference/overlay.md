@@ -193,7 +193,8 @@ interface OverlayMetrics {
 ### `destroy()`
 
 取消全部展示计时器，销毁活跃卡片、预算 grant、实例注册和所有 renderer，并清空队列与
-去重表。重复调用安全。清理步骤会全部尝试；任一步失败时，完成其余清理后抛出
+去重表。重复调用安全。每张卡片的独立清理步骤都会尝试；失败步骤保留到后续 drain 或下一次
+`destroy()` 重试。卡片子资源全部释放后才销毁其 renderer 与实例注册，失败时抛出
 `OverlayCleanupError`。
 
 ## Renderer
@@ -317,16 +318,16 @@ interface OverlayBudgetMetrics {
 
 ## 错误
 
-| 错误                               | 条件                                |
-| ---------------------------------- | ----------------------------------- |
-| `ContractVersionMismatchError`     | 调用方契约版本不匹配                |
-| `InvalidOverlayEventError`         | 事件或结构节点字段非法              |
-| `InvalidOverlayConfigurationError` | 上限、实例状态或协调器请求非法      |
-| `OverlayCapacityError`             | renderer、listener 或实例表达到上限 |
-| `OverlayDestroyedError`            | 销毁后继续操作引擎、协调器或注册    |
-| `OverlayRenderError`               | renderer 抛错；通过 `onError` 报告  |
-| `OverlaySchedulingError`           | 展示计时器或 grant 监听注册失败     |
-| `OverlayCleanupError`              | 销毁或卡片回收期间有清理步骤失败    |
+| 错误                               | 条件                                   |
+| ---------------------------------- | -------------------------------------- |
+| `ContractVersionMismatchError`     | 调用方契约版本不匹配                   |
+| `InvalidOverlayEventError`         | 事件或结构节点字段非法                 |
+| `InvalidOverlayConfigurationError` | 上限、实例状态或协调器请求非法         |
+| `OverlayCapacityError`             | renderer、listener 或实例表达到上限    |
+| `OverlayDestroyedError`            | 销毁后继续操作引擎、协调器或注册       |
+| `OverlayRenderError`               | renderer 抛错；通过 `onError` 报告     |
+| `OverlaySchedulingError`           | 展示计时器、grant 请求、级别或监听失败 |
+| `OverlayCleanupError`              | 销毁或卡片回收期间有清理步骤失败       |
 
 渲染和调度错误会增加非正常指标，并通过 `onError` 报告；不会伪装成成功展示。错误不包含
 结构节点内容、资源 URL、Cookie 或 token。

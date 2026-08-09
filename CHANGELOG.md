@@ -2,7 +2,69 @@
 
 本文件记录 LiveFlow 的显著变更，格式参考 Keep a Changelog，版本号遵循语义化版本。
 
-从 `v1.0.0` 起，公共接口遵循语义化版本兼容规则。
+从 `v2.0.0` 起，公共接口与 `CONTRACT_VERSION` 同步遵循语义化主版本规则。
+
+## [2.0.0] - 2026-08-09
+
+### 破坏性变化
+
+- `CONTRACT_VERSION` 从 `1` 升为 `2`。`v1.1.0` 至 `v1.4.0` 已发生的 TypeScript 契约变化
+  现正式按主版本发布：`ContinuityState` 新增 `suspended`，`ContinuitySnapshot` 新增必填
+  `healthySince` 与 `suspension`，`ContinuityController` 新增 `resume()` 与
+  `cancelRecovery()`，`ContinuityPolicy` 新增必填的 `maxPlausibleLiveEdgeSeconds`、
+  `maxGapJumpSeconds`、`stallNudgeSeconds` 与 `maxStallSeeksPerSource`。穷举状态、构造快照或
+  自行实现这些 interface 的消费方需要随之更新。
+- 删除从未参与运行时决策的 `ContinuityPolicy.reopenGraceMs`。完整 policy 对象应删除该字段；
+  平台离线判断仍由调用方拥有，控制器不会根据等待时长推断主播状态。
+- `DanmakuMessage.metadata` 不再接受任意 record，改为递归的 `DanmakuMetadata.entries` 元组
+  列表。调用方应在消息投影边界构造有界 entries，而不是把上游对象直接交给引擎。
+
+### 安全
+
+- 弹幕先执行接收速率门禁，再读取上游 metadata 与 identity；超速输入不会触碰 metadata
+  getter。显式 entries 与数组的长度可在读取子项前先验检查，避免全量枚举调用方的任意对象。
+- 事件横幅在空白归一化前拒绝超长原始文本，超限输入不会进入文本测量或 DOM 挂载。
+- 播放错误分类只读取受限的错误名或固定 adapter 错误码；恶意 `name` getter 抛错时统一记为
+  `unknown`，错误与诊断仍不传播媒体 URL、上游 message 或 `cause`。
+- 弹幕、实时事件与横幅内容的 hostile getter 只会产生稳定的类型化输入错误，不再让调用方抛出的
+  原始 message 穿过公开信任边界。
+
+### 连续性
+
+- 浏览器挂起只接受 `AbortError`、`NotAllowedError` 及对应固定 adapter 错误码。其他续播失败
+  以类型化、脱敏的 `SourceTransitionError` 结束，不再被静默当作仍然挂起。
+- `pageActivity` 订阅后立即复核当前可见性，补上订阅建立期间错过 `visibilitychange` 的竞态；
+  旧 generation 的异步续播完成也不会再清除新一代 suspension。
+- adapter 的 `play()` Promise resolve 不再提前建立 `playing` 与 `healthySince`，健康状态只由
+  当前 generation 的首帧确认。
+- 硬尾距恢复与卡顿恢复统一先尝试 `seek`，失败或次数耗尽后才请求换源；事件驱动的 seek
+  同样校验全部播放指标，`strandedGapSeconds` 必须有限且非负。
+
+### 生命周期
+
+- media-session adapter、事件横幅、Chrome 可见性、页面可见性来源与 DOM 弹幕 renderer 的
+  初始化和销毁改为事务式、分步清理。单步失败不会阻止其余资源释放，未完成步骤保留到重试，
+  最终只抛稳定的类型化清理错误。
+- 播放器事件订阅失败会回滚已绑定 listener，销毁会重试未释放的会话与迟到候选；DPlayer-like
+  包装提供 `off` 时会主动退订，包装型 adapter 也会转发可选 `seek()`。
+- 弹幕引擎即使取消 frame 失败，仍会清空内部集合并销毁 renderer；renderer 构造失败会回滚
+  media-query listener、probe 与 layer。
+- 实时事件卡片、预算授权、renderer、registration 与横幅图片都保留分步清理所有权；任一步骤
+  失败不会遗忘其余资源，后续操作或重复 `destroy()` 可以重试。
+
+### 性能与正确性
+
+- 弹幕 resize 改写 `laneHeight` 后会按实测高度重算所有可见项的 `laneSpan`，移除越界或新
+  产生冲突的项，避免轨道重叠；暂停期间 resize 仍保持动画时点冻结，并立即交付新位置。
+- resize 会按新 viewport 与速度重基滚动项时间轴，保证不同宽度的同轨消息不会在稍后追撞。
+- metadata 在递归复制时同步计算 UTF-8 字节预算，并先用字符串长度下界拒绝明显超限输入，
+  不再对整块结构执行 `JSON.stringify()` 或编码。
+- 原生媒体指标把缓冲段结束位置视为开区间，能准确报告播放头卡在相邻缓冲空洞的距离。
+
+### CI
+
+- 增强发布门禁：验证全部公开子路径的空白消费者打包安装、快速合成 soak、完整依赖审计与
+  三浏览器独立测试，继续检查包体预算、无 sourcemap 与提交的 `dist/` 一致性。
 
 ## [1.4.0] - 2026-08-07
 
@@ -52,7 +114,7 @@
 
 ### 新增
 
-- 事件横幅呈现器（`@babywbx/liveflow/overlay`）：有界活动集合、字号阶梯与截断、素材失败
+- 事件横幅呈现器（`@babywbx/liveflow/overlay/banner`）：有界活动集合、字号阶梯与截断、素材失败
   就地降级为紧凑样式、注入式渲染面，平台素材与文案仍留在调用方。
 - 播放器控件显隐控制器 `@babywbx/liveflow/chrome`：移动唤起、空闲隐藏、pin 计数、
   focus-within 与播放期常驻，时间走注入的 `Clock`，与框架无关。

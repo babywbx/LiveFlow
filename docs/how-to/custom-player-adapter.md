@@ -32,6 +32,7 @@ interface LivePlayerAdapter {
   getMetrics(): PlaybackMetrics
   subscribe(listener: PlaybackEventListener): () => void
   destroy(): Promise<void>
+  seek?(seconds: number): void
 }
 ```
 
@@ -83,9 +84,13 @@ listener({
 - 距离已知直播边缘的距离；
 - 实际播放速度；
 - 可选卡顿起点；
-- 可选累计丢帧数。
+- 可选累计丢帧数；
+- 可选的下一段缓冲空洞距离 `strandedGapSeconds`。
 
 无法得到某项指标时，不要伪造健康值。adapter 可以抛出脱敏错误，让控制器进入明确恢复。
+
+实现可选 `seek(seconds)` 后，控制器会在 `stall` 或硬尾距恢复前尝试跳过缓冲空洞或小幅推进
+播放头。没有可靠 seek 能力时省略该方法，控制器会直接走原有恢复请求。
 
 ## 画质和线路
 

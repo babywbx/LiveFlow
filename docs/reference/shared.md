@@ -9,7 +9,7 @@ import { CONTRACT_VERSION } from '@babywbx/liveflow'
 ```
 
 调用方把这个值传给 `createContinuityController()`、`createDanmakuEngine()` 和
-`createOverlayEngine()`。版本不一致时创建立即失败。当前契约版本为 `1`。
+`createOverlayEngine()`。版本不一致时创建立即失败。当前契约版本为 `2`。
 
 ## Clock
 

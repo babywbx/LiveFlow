@@ -228,22 +228,22 @@ and never statically pulls in an engine or a player runtime.
 | Subpath                            | Provides                                             |   gzip | Budget |
 | ---------------------------------- | ---------------------------------------------------- | -----: | -----: |
 | `@babywbx/liveflow`                | `CONTRACT_VERSION`, shared types, typed errors       |      — |      — |
-| `@babywbx/liveflow/continuity`     | Continuity controller and player adapter contract    | 4.7 KB |   6 KB |
-| `@babywbx/liveflow/danmaku`        | Bounded danmaku scheduler                            | 4.9 KB |   7 KB |
-| `@babywbx/liveflow/danmaku/dom`    | Safe structured DOM renderer and color helpers       | 2.8 KB |   4 KB |
-| `@babywbx/liveflow/overlay`        | Realtime event engine and shared budget coordinator  | 5.6 KB |   8 KB |
-| `@babywbx/liveflow/overlay/banner` | Event banner presenter (optional)                    | 4.0 KB |   5 KB |
-| `@babywbx/liveflow/chrome`         | Player chrome visibility controller                  | 1.4 KB |   2 KB |
+| `@babywbx/liveflow/continuity`     | Continuity controller and player adapter contract    | 5.9 KB |   6 KB |
+| `@babywbx/liveflow/danmaku`        | Bounded danmaku scheduler                            | 5.6 KB |   7 KB |
+| `@babywbx/liveflow/danmaku/dom`    | Safe structured DOM renderer and color helpers       | 3.1 KB |   4 KB |
+| `@babywbx/liveflow/overlay`        | Realtime event engine and shared budget coordinator  | 6.2 KB |   8 KB |
+| `@babywbx/liveflow/overlay/banner` | Event banner presenter (optional)                    | 4.3 KB |   5 KB |
+| `@babywbx/liveflow/chrome`         | Player chrome visibility controller                  | 1.5 KB |   2 KB |
 | `@babywbx/liveflow/multiview`      | Multiview grid layout math and grid track contract   | 0.9 KB |   2 KB |
-| `@babywbx/liveflow/native-video`   | Native `<video>` adapter                             | 3.0 KB |   4 KB |
+| `@babywbx/liveflow/native-video`   | Native `<video>` adapter                             | 3.6 KB |   4 KB |
 | `@babywbx/liveflow/page-activity`  | Page visibility source for suspended playback        | 0.5 KB |   2 KB |
-| `@babywbx/liveflow/artplayer`      | ArtPlayer-like seam with no static player dependency | 3.0 KB |   4 KB |
-| `@babywbx/liveflow/dplayer`        | DPlayer-like seam with no static player dependency   | 3.0 KB |   4 KB |
-| `@babywbx/liveflow/videojs`        | Video.js-like seam with no static player dependency  | 3.2 KB |   4 KB |
-| `@babywbx/liveflow/xgplayer`       | XGPlayer-like seam with no static player dependency  | 3.0 KB |   4 KB |
+| `@babywbx/liveflow/artplayer`      | ArtPlayer-like seam with no static player dependency | 3.6 KB |   4 KB |
+| `@babywbx/liveflow/dplayer`        | DPlayer-like seam with no static player dependency   | 3.5 KB |   4 KB |
+| `@babywbx/liveflow/videojs`        | Video.js-like seam with no static player dependency  | 3.7 KB |   4 KB |
+| `@babywbx/liveflow/xgplayer`       | XGPlayer-like seam with no static player dependency  | 3.5 KB |   4 KB |
 
 Measured minified and gzipped by `pnpm size:check`, which fails CI on any regression past the
-budget column. The four core subpaths combined measure 15.1 KB against a 20 KB ceiling.
+budget column. The four core subpaths combined measure 18.5 KB against a 20 KB ceiling.
 
 <div align="right">
 
@@ -259,7 +259,7 @@ budget column. The four core subpaths combined measure 15.1 KB against a 20 KB c
 import { CONTRACT_VERSION, LiveFlowError } from '@babywbx/liveflow'
 ```
 
-`CONTRACT_VERSION` is currently `1`. Every engine factory takes it and throws
+`CONTRACT_VERSION` is currently `2`. Every engine factory takes it and throws
 `ContractVersionMismatchError` on creation when it does not match. There is no compatibility
 guessing at runtime.
 
@@ -310,14 +310,28 @@ interface ContinuityController {
 | `clock`             | `Clock`                     | No       | Monotonic clock; defaults to the browser clock       |
 | `policy`            | `Partial<ContinuityPolicy>` | No       | Overrides the conservative defaults                  |
 | `onRecoveryRequest` | `(request) => void`         | No       | Asks the caller to resolve and submit a fresh source |
+| `pageActivity`      | `PageActivitySource`        | No       | Retries browser-refused playback when visible        |
 | `onDiagnostic`      | `(event) => void`           | No       | Rate-limited structured diagnostics                  |
 
-`setSource()` increments the generation, then runs `prepare()` → `commit()` → `play()` and waits for
-that generation's `first-frame` event. The returned promise settles after `play()`, not after the
-first frame. Warm-up shares a single `sourceWarmupTimeoutMs` deadline; late prepared sources are
-discarded and can never commit.
+`setSource()` increments the generation, then runs `prepare()` → `commit()` → `play()`. The
+controller subsequently waits for that generation's `first-frame` event before becoming healthy,
+but the returned promise settles after `play()`, not after the first frame. Warm-up shares a single
+`sourceWarmupTimeoutMs` deadline; late prepared sources are discarded and can never commit.
 
-`getSnapshot()` returns `{ state, generation, automaticRecoveryCount }` and deliberately omits the
+`getSnapshot()` returns every continuity state field:
+
+```ts
+interface ContinuitySnapshot {
+  readonly state: ContinuityState
+  readonly generation: number
+  readonly automaticRecoveryCount: number
+  readonly healthySince: number | null
+  readonly suspension: PlaybackSuspension | null
+}
+```
+
+`healthySince` is the monotonic-clock timestamp at which the current healthy run began. `suspension`
+records browser power-saving suspension or autoplay blocking. The snapshot deliberately omits the
 media URL, so no signed parameter leaks into UI state or diagnostics. `subscribe()` keeps at most 32
 distinct listeners and throws `CapacityExceededError` beyond that; a throwing listener never changes
 controller state.
@@ -331,6 +345,7 @@ controller state.
 | `degraded`       | Waiting, stall, error, or a sustained high live-edge distance |
 | `recovering`     | One bounded recovery request is outstanding                   |
 | `waiting-reopen` | Automatic recovery exhausted, unrecoverable, or no listener   |
+| `suspended`      | Browser power saving or autoplay policy refused playback      |
 | `stopped`        | The controller was destroyed                                  |
 
 > \[!NOTE\]
@@ -357,6 +372,7 @@ interface LivePlayerAdapter {
   getMetrics(): PlaybackMetrics
   subscribe(listener: PlaybackEventListener): () => void
   destroy(): Promise<void>
+  seek?(seconds: number): void
 }
 ```
 
@@ -364,6 +380,10 @@ An adapter must not replace the visible media during `prepare()`, must reject st
 `commit()`, must reveal the candidate atomically _before_ emitting `first-frame`, must make
 `discard()` and `destroy()` idempotent, must tag every `PlaybackEvent` with its generation, and must
 never put a signed URL, cookie, or token into an error.
+
+`seek(seconds)` is optional. `PlaybackMetrics.strandedGapSeconds` is also optional and reports the
+distance from the playhead to the next buffered range; omit either capability when it cannot be
+provided reliably instead of inventing a healthy value.
 
 Five implementations ship with the library:
 
@@ -376,10 +396,14 @@ import { createXgPlayerAdapter } from '@babywbx/liveflow/xgplayer'
 ```
 
 `createNativeVideoAdapter({ video })` creates the hidden candidate in the same parent node, copies
-`controls` / `playsInline` / `className`, and swaps visibility on the first frame — using
+`controls` / `playsInline` / `className`, and swaps visibility on the first frame, using
 `requestVideoFrameCallback` where available and the `playing` event otherwise. Candidates stay muted
 until the handoff, so two instances never sound at once. The caller keeps DOM ownership of the
-element it passed in; every node the adapter created is removed by the adapter.
+element it passed in; every node the adapter created is removed by the adapter. The optional `binding`
+lets the caller own a custom MSE-style source lifecycle through `NativeVideoSourceBinding.attach()` /
+`detach()`.
+`NativeVideoAdapterOptions` requires `video`; `surface`, `binding`, `crossOrigin`, `now`, and
+`onDiagnostic` are optional. See [Adapters](./docs/reference/adapters.md) for the complete contract.
 
 `createArtPlayerAdapter({ player, createPlayer })` never statically imports a player package. The
 caller supplies a small `ArtPlayerLike` wrapper (underlying `video`, `on` / `off`, `setMutex(false)`,
@@ -388,9 +412,10 @@ instance per call.
 
 `createDPlayerAdapter`, `createVideoJsAdapter`, and `createXgPlayerAdapter` follow the same wrapper
 pattern: structural `*Like` interfaces plus a candidate factory, with no static player imports. The
-DPlayer seam accommodates its event system that has no `off`; the Video.js seam resolves the media
-element through `el()` and tolerates `dispose()` detaching the host from the DOM; the XGPlayer seam
-resolves the media element from `media` then `video` and uses `root` as the default container.
+DPlayer seam accommodates its event system that has no `off`, and actively unsubscribes when a wrapper
+provides optional `off`; the Video.js seam resolves the media element through `el()` and tolerates
+`dispose()` detaching the host from the DOM; the XGPlayer seam resolves the media element from `media`
+then `video` and uses `root` as the default container.
 
 All adapters accept a custom surface whose `reveal` must be synchronous and atomic.
 Reference: [Adapters](./docs/reference/adapters.md),
@@ -426,8 +451,16 @@ interface DanmakuMessage {
   color?: string
   sender?: { displayName?: string }
   identities?: readonly DanmakuIdentity[]
-  metadata?: Readonly<Record<string, unknown>>
+  metadata?: DanmakuMetadata
 }
+
+interface DanmakuMetadata {
+  readonly entries: readonly DanmakuMetadataEntry[]
+}
+
+type DanmakuMetadataEntry = readonly [string, DanmakuMetadataValue]
+type DanmakuMetadataValue =
+  number | string | boolean | null | readonly DanmakuMetadataValue[] | DanmakuMetadata
 
 interface DanmakuIdentity {
   kind: string
@@ -441,6 +474,10 @@ interface DanmakuIdentity {
 `kind`, `variant`, and `assetKey` are caller-defined strings with no platform semantics. Multiple
 identities remain separate nodes; the engine never infers one identity from another and never lets
 an identity level recolor the body text. Body color accepts `#rgb` or `#rrggbb` only.
+
+`metadata` uses explicit recursive `entries` lists. The engine can check each `entries` or array
+`length` before reading child values, so it never fully enumerates an arbitrary caller object. Values
+are limited to finite numbers, strings, booleans, `null`, arrays, and nested `DanmakuMetadata`.
 
 `push()` validates and copies synchronously. `accepted: true` means the message entered the bounded
 pending queue — not that it will be shown, because it can still expire or find no lane. Structural
@@ -621,12 +658,19 @@ mutually contradictory values throw a typed configuration error instead of being
 
 **Continuity policy** — `DEFAULT_CONTINUITY_POLICY`:
 
-| Field                         | Default | Field                    | Default |
-| ----------------------------- | ------: | ------------------------ | ------: |
-| `targetLatencySeconds`        |     `2` | `recoveryCooldownMs`     | `30000` |
-| `softCatchupThresholdSeconds` |   `0.6` | `sourceWarmupTimeoutMs`  |  `8000` |
-| `hardResyncThresholdSeconds`  |     `8` | `reopenGraceMs`          | `90000` |
-| `catchupRate`                 |  `1.04` | `maxAutomaticRecoveries` |     `4` |
+| Field                         | Default |
+| ----------------------------- | ------: |
+| `targetLatencySeconds`        |     `2` |
+| `softCatchupThresholdSeconds` |   `0.6` |
+| `hardResyncThresholdSeconds`  |     `8` |
+| `maxPlausibleLiveEdgeSeconds` |  `3600` |
+| `catchupRate`                 |  `1.04` |
+| `recoveryCooldownMs`          | `30000` |
+| `sourceWarmupTimeoutMs`       |  `8000` |
+| `maxAutomaticRecoveries`      |     `4` |
+| `maxGapJumpSeconds`           |    `30` |
+| `stallNudgeSeconds`           |   `0.1` |
+| `maxStallSeeksPerSource`      |     `3` |
 
 **Danmaku limits and policy** — `DEFAULT_DANMAKU_LIMITS`, `DEFAULT_DANMAKU_POLICY`:
 
@@ -641,8 +685,8 @@ mutually contradictory values throw a typed configuration error instead of being
 | `maxIntakePerSecond`  |   `120` | `duplicateWindowMs`     |      `500` |
 | `maxDisplayPerSecond` |    `60` | `frameBudgetMs`         |        `8` |
 
-`metadata` is additionally bounded by `maxMetadataKeys` (`16`), `maxMetadataDepth` (`2`), and
-`maxMetadataBytes` (`2048`).
+Metadata entries and array items share the `maxMetadataKeys` (`16`) budget and are additionally
+bounded by `maxMetadataDepth` (`2`) and `maxMetadataBytes` (`2048`).
 
 **Overlay limits** — `DEFAULT_OVERLAY_LIMITS`:
 
@@ -670,8 +714,9 @@ an older generation can never change current state, and an adapter must addition
 commits at its own seam so an in-flight swap cannot overwrite newer media.
 
 **Provable boundedness.** Pending queues, visible sets, DOM node pools, text length, badge counts,
-metadata keys and depth, mounts per frame, intake and display rates, and the instance registry all
-have fixed ceilings. Overload drops by priority — the queue is never grown to "save" every message.
+metadata entries, array items and depth, mounts per frame, intake and display rates, and the instance
+registry all have fixed ceilings. Overload drops by priority — the queue is never grown to "save"
+every message.
 
 **Failures stay loud.** Unparseable input, out-of-range values, and contract mismatches throw typed
 errors. Nothing degrades silently into a result that merely looks normal, and a renderer failure is
@@ -759,24 +804,25 @@ It is written in Chinese; API names and code samples are language-independent.
 
 ## 🛠 Development
 
-Node.js `>=22.5.0` and pnpm `11.16.0` are required.
+Node.js `>=22.13.0` and pnpm `11.16.0` are required.
 
-| Purpose            | Command                                  |
-| ------------------ | ---------------------------------------- |
-| Full gate          | `pnpm check`                             |
-| Type check         | `pnpm typecheck`                         |
-| Format             | `pnpm format` / `pnpm format:check`      |
-| Lint               | `pnpm lint`                              |
-| Unit + integration | `pnpm test`                              |
-| Browser            | `pnpm test:browser`                      |
-| Soak               | `SOAK_DURATION_MS=300000 pnpm test:soak` |
-| Build              | `pnpm build`                             |
-| Bundle budget      | `pnpm size:check`                        |
+| Purpose            | Command                             |
+| ------------------ | ----------------------------------- |
+| Full gate          | `pnpm check`                        |
+| Type check         | `pnpm typecheck`                    |
+| Format             | `pnpm format` / `pnpm format:check` |
+| Lint               | `pnpm lint`                         |
+| Unit + integration | `pnpm test`                         |
+| Browser            | `pnpm test:browser`                 |
+| Accelerated soak   | `pnpm test:soak`                    |
+| Tarball consumer   | `pnpm consumer:check`               |
+| Build              | `pnpm build`                        |
+| Bundle budget      | `pnpm size:check`                   |
 
-`pnpm check` aggregates format check, type check, lint, doc-link check, tests, build, bundle budget,
-and the example build. It is the de facto CI gate and must pass locally before every commit. Because
-`dist/` ships with the repository, any change under `src/` must be rebuilt and committed together
-with its build output.
+`pnpm check` aggregates format check, type check, lint, doc-link check, tests, the accelerated
+synthetic soak, build, bundle budget, the example build, and the blank tarball consumer. It is the de
+facto CI gate and must pass locally before every commit. Because `dist/` ships with the repository,
+any change under `src/` must be rebuilt and committed together with its build output.
 
 The example workspace reads a local media file and generates synthetic messages. It never uploads
 the selected file and never connects to a streaming platform:
@@ -894,5 +940,5 @@ This project is released under the [MIT](./LICENSE) license.
 [github-stars-link]: https://github.com/babywbx/LiveFlow/stargazers
 [github-stars-shield]: https://img.shields.io/github/stars/babywbx/LiveFlow?color=ffcb47&labelColor=black&style=flat-square
 [node-link]: https://github.com/babywbx/LiveFlow/blob/main/package.json
-[node-shield]: https://img.shields.io/badge/node-%3E%3D22.5.0-369eff?labelColor=black&style=flat-square
+[node-shield]: https://img.shields.io/badge/node-%3E%3D22.13.0-369eff?labelColor=black&style=flat-square
 [profile-link]: https://github.com/babywbx

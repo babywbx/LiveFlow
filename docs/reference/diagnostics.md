@@ -10,7 +10,13 @@
 - `stale-playback-event`
 - `prepared-source-discarded`
 - `prepared-source-cleanup-failed`
+- `playback-suspended`
+- `playback-resume-failed`
+- `page-activity-subscribe-failed`
+- `page-activity-unsubscribe-failed`
 - `stall-detected`
+- `stall-seek`
+- `implausible-live-edge`
 - `catchup-started`
 - `catchup-stopped`
 - `metrics-sample-failed`
@@ -18,6 +24,7 @@
 - `playback-rate-update-failed`
 - `nonrecoverable-playback-error`
 - `recovery-requested`
+- `recovery-cancelled`
 - `recovery-exhausted`
 - `recovery-listener-missing`
 - `recovery-listener-failed`
@@ -28,8 +35,8 @@
 - `media-release-failed`
 - `playback-listener-failed`
 
-状态指标通过 `getSnapshot()` 获取：`state`、`generation` 与
-`automaticRecoveryCount`。
+状态指标通过 `getSnapshot()` 获取：`state`、`generation`、`automaticRecoveryCount`、
+`healthySince` 与 `suspension`。
 
 ## Danmaku
 
