@@ -1,5 +1,5 @@
 import { createSystemClock } from '../shared/clock.js';
-import { CapacityExceededError } from '../shared/errors.js';
+import { CapacityExceededError, LiveFlowError } from '../shared/errors.js';
 import { ChromeVisibilityDestroyedError, ChromeVisibilityPinUnderflowError, InvalidChromeVisibilityConfigurationError, } from './errors.js';
 export const DEFAULT_CHROME_IDLE_HIDE_MS = 2_500;
 const HIDDEN_SNAPSHOT = Object.freeze({ visible: false });
@@ -100,17 +100,26 @@ class DefaultChromeVisibilityController {
         };
     }
     destroy() {
-        if (this.destroyed) {
+        if (this.destroyed && this.hideTimer === null) {
             return;
         }
         this.destroyed = true;
-        this.cancelHide();
+        let cleanupFailed = false;
+        try {
+            this.cancelHide();
+        }
+        catch {
+            cleanupFailed = true;
+        }
         this.focusWithin = false;
         this.hold = false;
         this.pinCount = 0;
         this.pointerInside = false;
         this.setVisible(false);
         this.listeners.clear();
+        if (cleanupFailed) {
+            throw new LiveFlowError('chrome-visibility-cleanup-failed', 'Chrome visibility cleanup did not complete successfully.');
+        }
     }
     reveal() {
         this.ensureActive();
@@ -151,8 +160,8 @@ class DefaultChromeVisibilityController {
             return;
         }
         const timer = this.hideTimer;
-        this.hideTimer = null;
         this.clock.clearTimeout(timer);
+        this.hideTimer = null;
     }
     isHeld() {
         return this.pinCount > 0 || this.focusWithin || (this.hold && this.pointerInside);

@@ -7,8 +7,21 @@ import {
   DEFAULT_CHROME_IDLE_HIDE_MS,
   InvalidChromeVisibilityConfigurationError,
 } from '../../src/chrome/index.js'
-import { CapacityExceededError } from '../../src/shared/errors.js'
+import type { TimerHandle } from '../../src/shared/clock.js'
+import { CapacityExceededError, LiveFlowError } from '../../src/shared/errors.js'
 import { FakeClock } from '../fixtures/fake-clock.js'
+
+class FlakyTimerClock extends FakeClock {
+  private clearFailures = 1
+
+  override clearTimeout(handle: TimerHandle): void {
+    if (this.clearFailures > 0) {
+      this.clearFailures -= 1
+      throw new Error('timer cancellation failed')
+    }
+    super.clearTimeout(handle)
+  }
+}
 
 describe('chrome visibility', () => {
   it('reveals chrome on pointer signals and hides it after the idle window', () => {
@@ -213,6 +226,49 @@ describe('chrome visibility', () => {
 
     chrome.pointerEnter()
     expect(seen).toEqual([true])
+  })
+
+  it('keeps a failed timer cancellation retryable during rescheduling', () => {
+    const clock = new FlakyTimerClock()
+    const chrome = createChromeVisibility({ clock })
+
+    chrome.pointerEnter()
+    expect(() => chrome.pointerMove()).toThrow('timer cancellation failed')
+    expect(clock.pendingTaskCount()).toBe(1)
+
+    expect(() => chrome.pointerMove()).not.toThrow()
+    expect(clock.pendingTaskCount()).toBe(1)
+    clock.advanceBy(DEFAULT_CHROME_IDLE_HIDE_MS)
+    expect(chrome.getSnapshot().visible).toBe(false)
+  })
+
+  it('resets all state before reporting a retryable destroy failure', () => {
+    const clock = new FlakyTimerClock()
+    const chrome = createChromeVisibility({ clock })
+    const transitions: boolean[] = []
+    chrome.subscribe((snapshot) => {
+      transitions.push(snapshot.visible)
+    })
+    chrome.pointerEnter()
+
+    let cleanupError: unknown = null
+    try {
+      chrome.destroy()
+    } catch (error) {
+      cleanupError = error
+    }
+    expect(cleanupError).toBeInstanceOf(LiveFlowError)
+    if (!(cleanupError instanceof LiveFlowError)) {
+      throw new Error('expected typed cleanup error')
+    }
+    expect(cleanupError.code).toBe('chrome-visibility-cleanup-failed')
+    expect(chrome.getSnapshot().visible).toBe(false)
+    expect(transitions).toEqual([true, false])
+    expect(clock.pendingTaskCount()).toBe(1)
+    expect(() => chrome.pointerMove()).toThrow(ChromeVisibilityDestroyedError)
+
+    expect(() => chrome.destroy()).not.toThrow()
+    expect(clock.pendingTaskCount()).toBe(0)
   })
 
   it('destroys idempotently, leaves no timer behind, and rejects later signals', () => {

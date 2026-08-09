@@ -1,5 +1,5 @@
 import { createSystemClock, type Clock, type TimerHandle } from '../shared/clock.js'
-import { CapacityExceededError } from '../shared/errors.js'
+import { CapacityExceededError, LiveFlowError } from '../shared/errors.js'
 import {
   ChromeVisibilityDestroyedError,
   ChromeVisibilityPinUnderflowError,
@@ -145,18 +145,29 @@ class DefaultChromeVisibilityController implements ChromeVisibilityController {
   }
 
   destroy(): void {
-    if (this.destroyed) {
+    if (this.destroyed && this.hideTimer === null) {
       return
     }
 
     this.destroyed = true
-    this.cancelHide()
+    let cleanupFailed = false
+    try {
+      this.cancelHide()
+    } catch {
+      cleanupFailed = true
+    }
     this.focusWithin = false
     this.hold = false
     this.pinCount = 0
     this.pointerInside = false
     this.setVisible(false)
     this.listeners.clear()
+    if (cleanupFailed) {
+      throw new LiveFlowError(
+        'chrome-visibility-cleanup-failed',
+        'Chrome visibility cleanup did not complete successfully.',
+      )
+    }
   }
 
   private reveal(): void {
@@ -204,8 +215,8 @@ class DefaultChromeVisibilityController implements ChromeVisibilityController {
     }
 
     const timer = this.hideTimer
-    this.hideTimer = null
     this.clock.clearTimeout(timer)
+    this.hideTimer = null
   }
 
   private isHeld(): boolean {
