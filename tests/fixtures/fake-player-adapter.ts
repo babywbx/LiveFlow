@@ -38,6 +38,7 @@ export class FakePlayerAdapter implements LivePlayerAdapter {
   private stagedSourceGeneration: number | null = null
   private visibleSourceGeneration: number | null = null
   private pendingPlayResolve: (() => void) | null = null
+  private pendingPlayReject: ((error: Error) => void) | null = null
   private playObservedResolve: (() => void) | null = null
 
   async prepare(_source: LiveSource, generation: number): Promise<PreparedSource> {
@@ -89,8 +90,9 @@ export class FakePlayerAdapter implements LivePlayerAdapter {
         this.playObservedResolve()
         this.playObservedResolve = null
       }
-      await new Promise<void>((resolve) => {
+      await new Promise<void>((resolve, reject) => {
         this.pendingPlayResolve = resolve
+        this.pendingPlayReject = reject
       })
     }
   }
@@ -231,7 +233,19 @@ export class FakePlayerAdapter implements LivePlayerAdapter {
 
     const resolve = this.pendingPlayResolve
     this.pendingPlayResolve = null
+    this.pendingPlayReject = null
     resolve()
+  }
+
+  rejectPlaybackStart(error: Error): void {
+    if (this.pendingPlayReject === null) {
+      throw new Error('No pending playback start.')
+    }
+
+    const reject = this.pendingPlayReject
+    this.pendingPlayResolve = null
+    this.pendingPlayReject = null
+    reject(error)
   }
 
   resolvePreparation(generation: number): void {

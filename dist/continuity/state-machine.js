@@ -52,7 +52,8 @@ export function reduceContinuityState(current, event) {
             if (current.state !== 'resolving' &&
                 current.state !== 'warming' &&
                 current.state !== 'playing' &&
-                current.state !== 'recovering') {
+                current.state !== 'recovering' &&
+                current.state !== 'suspended') {
                 return current;
             }
             return {

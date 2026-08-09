@@ -74,6 +74,48 @@ describe('continuity controller', () => {
     await controller.destroy()
   })
 
+  it('does not carry a stale recovery into a reentrant source change', async () => {
+    const adapter = new FakePlayerAdapter()
+    const clock = new FakeClock()
+    const requests: number[] = []
+    const replacements: Promise<void>[] = []
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      policy: { maxStallSeeksPerSource: 0 },
+      onRecoveryRequest: (request) => {
+        requests.push(request.generation)
+      },
+    })
+    await controller.setSource({
+      url: 'https://media.example/first.flv',
+      kind: 'flv',
+    })
+    adapter.emit({ type: 'first-frame', generation: 1 })
+    adapter.deferPreparations()
+    controller.subscribe((snapshot) => {
+      if (snapshot.state === 'degraded' && snapshot.generation === 1) {
+        replacements.push(
+          controller.setSource({
+            url: 'https://media.example/replacement.flv',
+            kind: 'flv',
+          }),
+        )
+      }
+    })
+
+    adapter.emit({ type: 'waiting', generation: 1 })
+    adapter.resolvePreparation(2)
+    await Promise.all(replacements)
+    clock.advanceBy(400)
+
+    expect(controller.getSnapshot()).toMatchObject({ state: 'warming', generation: 2 })
+    expect(requests).toEqual([])
+
+    await controller.destroy()
+  })
+
   it('uses a gentle playback rate only while the live edge is too far away', async () => {
     const adapter = new FakePlayerAdapter()
     const clock = new FakeClock()
@@ -302,6 +344,7 @@ describe('continuity controller', () => {
       clock,
       policy: {
         hardResyncThresholdSeconds: 8,
+        maxStallSeeksPerSource: 0,
       },
       onRecoveryRequest: (request) => {
         reasons.push(request.reason)
@@ -344,6 +387,7 @@ describe('continuity controller', () => {
       adapter,
       contractVersion: CONTRACT_VERSION,
       clock,
+      policy: { maxStallSeeksPerSource: 0 },
       onRecoveryRequest: (request) => {
         reasons.push(request.reason)
       },
@@ -1286,7 +1330,7 @@ describe('continuity controller', () => {
     await controller.destroy()
   })
 
-  it('destroys the adapter exactly once across repeated calls', async () => {
+  it('shares one destroy flight across concurrent calls', async () => {
     const adapter = new FakePlayerAdapter()
     const controller = createContinuityController({
       adapter,
@@ -1301,6 +1345,41 @@ describe('continuity controller', () => {
     await firstDestroy
     expect(adapter.destroyCallCount()).toBe(1)
     expect(controller.getSnapshot().state).toBe('stopped')
+  })
+
+  it('shares the destroy flight with a reentrant snapshot listener', async () => {
+    const adapter = new FakePlayerAdapter()
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock: new FakeClock(),
+    })
+    let nestedDestroy: Promise<void> | null = null
+    controller.subscribe((snapshot) => {
+      if (snapshot.state === 'stopped') {
+        nestedDestroy = controller.destroy()
+      }
+    })
+
+    const destroy = controller.destroy()
+    await destroy
+
+    expect(nestedDestroy).toBe(destroy)
+    expect(adapter.destroyCallCount()).toBe(1)
+  })
+
+  it('delegates a later destroy call for late adapter cleanup', async () => {
+    const adapter = new FakePlayerAdapter()
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock: new FakeClock(),
+    })
+
+    await controller.destroy()
+    await controller.destroy()
+
+    expect(adapter.destroyCallCount()).toBe(2)
   })
 
   it('discards a prepared resource that resolves after the controller is destroyed', async () => {

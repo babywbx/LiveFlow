@@ -11,6 +11,7 @@ const STALL_DEBOUNCE_MS = 400
 interface Harness {
   adapter: FakePlayerAdapter
   clock: FakeClock
+  diagnostics: string[]
   reasons: string[]
   controller: ReturnType<typeof createContinuityController>
 }
@@ -18,6 +19,7 @@ interface Harness {
 async function startPlaying(policy?: { maxStallSeeksPerSource?: number }): Promise<Harness> {
   const adapter = new FakePlayerAdapter()
   const clock = new FakeClock()
+  const diagnostics: string[] = []
   const reasons: string[] = []
   const controller = createContinuityController({
     adapter,
@@ -27,10 +29,13 @@ async function startPlaying(policy?: { maxStallSeeksPerSource?: number }): Promi
     onRecoveryRequest: (request) => {
       reasons.push(request.reason)
     },
+    onDiagnostic: (event) => {
+      diagnostics.push(event.code)
+    },
   })
   await controller.setSource(SOURCE)
   adapter.emit({ type: 'first-frame', generation: 1 })
-  return { adapter, clock, reasons, controller }
+  return { adapter, clock, diagnostics, reasons, controller }
 }
 
 describe('continuity stall seek', () => {
@@ -74,6 +79,62 @@ describe('continuity stall seek', () => {
 
     expect(adapter.seeks()).toEqual([40.1])
     expect(reasons).toEqual([])
+
+    await controller.destroy()
+  })
+
+  it('nudges excessive latency before reopening the source', async () => {
+    const { adapter, clock, reasons, controller } = await startPlaying()
+    adapter.setMetrics({
+      currentTimeSeconds: 20,
+      bufferedAheadSeconds: 10,
+      liveEdgeDistanceSeconds: 9,
+      playbackRate: 1,
+      stalledSince: null,
+      droppedFrames: null,
+    })
+
+    clock.advanceBy(2_000)
+
+    expect(adapter.seeks()).toEqual([20.1])
+    expect(reasons).toEqual([])
+    expect(controller.getSnapshot().state).toBe('degraded')
+
+    adapter.setMetrics({
+      currentTimeSeconds: 20.1,
+      bufferedAheadSeconds: 10,
+      liveEdgeDistanceSeconds: 2,
+      playbackRate: 1,
+      stalledSince: null,
+      droppedFrames: null,
+    })
+    clock.advanceBy(STALL_DEBOUNCE_MS)
+
+    expect(adapter.seeks()).toEqual([20.1])
+    expect(reasons).toEqual([])
+    expect(controller.getSnapshot().state).toBe('playing')
+
+    await controller.destroy()
+  })
+
+  it('rejects an invalid stranded gap before seeking', async () => {
+    const { adapter, clock, diagnostics, reasons, controller } = await startPlaying()
+    adapter.setMetrics({
+      currentTimeSeconds: 100,
+      bufferedAheadSeconds: 0,
+      liveEdgeDistanceSeconds: 9,
+      playbackRate: 1,
+      stalledSince: null,
+      droppedFrames: null,
+      strandedGapSeconds: Number.NaN,
+    })
+
+    adapter.emit({ type: 'waiting', generation: 1 })
+    clock.advanceBy(STALL_DEBOUNCE_MS)
+
+    expect(adapter.seeks()).toEqual([])
+    expect(reasons).toEqual(['stall'])
+    expect(diagnostics).toContain('invalid-playback-metrics')
 
     await controller.destroy()
   })

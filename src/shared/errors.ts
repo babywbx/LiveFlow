@@ -55,12 +55,35 @@ export class InvalidPlaybackMetricsError extends LiveFlowError {
 
 export type SourceTransitionPhase = 'prepare' | 'commit' | 'discard' | 'play'
 
-// Upstream messages can embed signed media URLs, so only the class name travels.
+const SAFE_ERROR_NAMES = new Set([
+  'AbortError',
+  'AggregateError',
+  'Error',
+  'EvalError',
+  'InvalidStateError',
+  'NetworkError',
+  'NotAllowedError',
+  'NotSupportedError',
+  'OperationError',
+  'QuotaExceededError',
+  'RangeError',
+  'ReferenceError',
+  'SecurityError',
+  'SyntaxError',
+  'TypeError',
+  'URIError',
+])
+
 export function sanitizeErrorName(error: unknown): string {
-  if (!(error instanceof Error)) {
+  try {
+    if (!(error instanceof Error)) {
+      return 'unknown'
+    }
+    const name: unknown = error.name
+    return typeof name === 'string' && SAFE_ERROR_NAMES.has(name) ? name : 'unknown'
+  } catch {
     return 'unknown'
   }
-  return /^[A-Za-z]{1,64}$/.test(error.name) ? error.name : 'unknown'
 }
 
 export class SourceTransitionError extends LiveFlowError {

@@ -95,7 +95,7 @@ describe('continuity recovery cancellation', () => {
     await harness.controller.destroy()
   })
 
-  it('drops a recovery that was scheduled but never delivered', async () => {
+  it('does not cancel a recovery that has not been delivered', async () => {
     const harness = createHarness()
     await playFirstSource(harness)
 
@@ -103,8 +103,8 @@ describe('continuity recovery cancellation', () => {
     harness.controller.cancelRecovery(1)
     harness.clock.advanceBy(STALL_DEBOUNCE_MS)
 
-    expect(harness.requests).toEqual([])
-    expect(harness.controller.getSnapshot().automaticRecoveryCount).toBe(0)
+    expect(harness.requests).toHaveLength(1)
+    expect(harness.controller.getSnapshot().automaticRecoveryCount).toBe(1)
 
     await harness.controller.destroy()
   })

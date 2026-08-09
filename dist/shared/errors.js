@@ -40,11 +40,35 @@ export class InvalidPlaybackMetricsError extends LiveFlowError {
         this.field = field;
     }
 }
+const SAFE_ERROR_NAMES = new Set([
+    'AbortError',
+    'AggregateError',
+    'Error',
+    'EvalError',
+    'InvalidStateError',
+    'NetworkError',
+    'NotAllowedError',
+    'NotSupportedError',
+    'OperationError',
+    'QuotaExceededError',
+    'RangeError',
+    'ReferenceError',
+    'SecurityError',
+    'SyntaxError',
+    'TypeError',
+    'URIError',
+]);
 export function sanitizeErrorName(error) {
-    if (!(error instanceof Error)) {
+    try {
+        if (!(error instanceof Error)) {
+            return 'unknown';
+        }
+        const name = error.name;
+        return typeof name === 'string' && SAFE_ERROR_NAMES.has(name) ? name : 'unknown';
+    }
+    catch {
         return 'unknown';
     }
-    return /^[A-Za-z]{1,64}$/.test(error.name) ? error.name : 'unknown';
 }
 export class SourceTransitionError extends LiveFlowError {
     phase;

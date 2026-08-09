@@ -23,6 +23,9 @@ export function validatePlaybackMetrics(metrics: PlaybackMetrics, now: number): 
   ) {
     throw new InvalidPlaybackMetricsError('droppedFrames')
   }
+  if (metrics.strandedGapSeconds !== undefined && metrics.strandedGapSeconds !== null) {
+    requireFiniteNonNegative('strandedGapSeconds', metrics.strandedGapSeconds)
+  }
 }
 
 function requireFiniteNonNegative(field: string, value: number): void {
