@@ -176,8 +176,8 @@ class DefaultContinuityController {
     }
     classifyPlayRejection(error, errorName) {
         try {
-            if (error instanceof LiveFlowError) {
-                const code = error.code;
+            if (typeof error === 'object' && error !== null) {
+                const code = Reflect.get(error, 'code');
                 if (code === 'media-play-autoplay-blocked') {
                     return 'autoplay-blocked';
                 }

@@ -14,6 +14,12 @@ function namedError(name: string): Error {
   return error
 }
 
+function foreignLiveFlowError(code: string): LiveFlowError {
+  const error = new LiveFlowError(code, 'Sanitized adapter rejection.')
+  Object.setPrototypeOf(error, Error.prototype)
+  return error
+}
+
 class FakePageActivity implements PageActivitySource {
   private hidden = true
   private readonly listeners = new Set<(hidden: boolean) => void>()
@@ -112,7 +118,7 @@ describe('continuity suspension', () => {
       contractVersion: CONTRACT_VERSION,
       clock: new FakeClock(),
     })
-    adapter.failNextPlay(new LiveFlowError(code, 'Sanitized adapter rejection.'))
+    adapter.failNextPlay(foreignLiveFlowError(code))
 
     await controller.setSource(SOURCE)
 

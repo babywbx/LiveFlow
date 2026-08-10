@@ -33,6 +33,9 @@
 
 - 浏览器挂起只接受 `AbortError`、`NotAllowedError` 及对应固定 adapter 错误码。其他续播失败
   以类型化、脱敏的 `SourceTransitionError` 结束，不再被静默当作仍然挂起。
+- 上述归类按结构读取错误，不再依赖 `instanceof`。跨 realm（例如 iframe 内的媒体元素）或跨包
+  入口点抵达的播放拒绝同样能匹配 allowlist 名称与固定 adapter 错误码，不会被误判成需要换源
+  的致命失败。
 - `pageActivity` 订阅后立即复核当前可见性，补上订阅建立期间错过 `visibilitychange` 的竞态；
   旧 generation 的异步续播完成也不会再清除新一代 suspension。
 - adapter 的 `play()` Promise resolve 不再提前建立 `playing` 与 `healthySince`，健康状态只由

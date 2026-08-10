@@ -34,6 +34,13 @@ class SyntheticTimeRanges {
   }
 }
 
+function foreignPlaybackError(name: string): Error {
+  const error = new Error('Synthetic playback failure.')
+  error.name = name
+  Object.setPrototypeOf(error, null)
+  return error
+}
+
 class SyntheticVideo implements VideoElementLike {
   src = ''
   crossOrigin: string | null = null
@@ -93,9 +100,7 @@ class SyntheticVideo implements VideoElementLike {
 
   async play(): Promise<void> {
     if (this.playFailureName !== null) {
-      const error = new Error('Synthetic playback failure.')
-      error.name = this.playFailureName
-      throw error
+      throw foreignPlaybackError(this.playFailureName)
     }
     this.paused = false
   }

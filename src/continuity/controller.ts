@@ -245,8 +245,8 @@ class DefaultContinuityController implements ContinuityController {
     errorName: string,
   ): PlaybackSuspensionReason | null {
     try {
-      if (error instanceof LiveFlowError) {
-        const code: unknown = error.code
+      if (typeof error === 'object' && error !== null) {
+        const code: unknown = Reflect.get(error, 'code')
         if (code === 'media-play-autoplay-blocked') {
           return 'autoplay-blocked'
         }

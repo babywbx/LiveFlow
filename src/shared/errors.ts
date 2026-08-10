@@ -76,10 +76,10 @@ const SAFE_ERROR_NAMES = new Set([
 
 export function sanitizeErrorName(error: unknown): string {
   try {
-    if (!(error instanceof Error)) {
+    if (typeof error !== 'object' || error === null) {
       return 'unknown'
     }
-    const name: unknown = error.name
+    const name: unknown = Reflect.get(error, 'name')
     return typeof name === 'string' && SAFE_ERROR_NAMES.has(name) ? name : 'unknown'
   } catch {
     return 'unknown'
