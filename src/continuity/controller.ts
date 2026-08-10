@@ -381,12 +381,18 @@ class DefaultContinuityController implements ContinuityController {
       await this.resumeFlight
       return
     }
-    const flight = this.adapter.play().catch((error: unknown) => {
-      const errorName = sanitizeErrorName(error)
-      if (this.classifyPlayRejection(error, errorName) === null) {
-        throw new SourceTransitionError('play', suspension.generation, errorName)
-      }
-    })
+    let resumed = false
+    const flight = this.adapter.play().then(
+      () => {
+        resumed = true
+      },
+      (error: unknown) => {
+        const errorName = sanitizeErrorName(error)
+        if (this.classifyPlayRejection(error, errorName) === null) {
+          throw new SourceTransitionError('play', suspension.generation, errorName)
+        }
+      },
+    )
     const trackedFlight = flight.finally(() => {
       if (this.resumeFlight === trackedFlight) {
         this.resumeFlight = null
@@ -394,6 +400,17 @@ class DefaultContinuityController implements ContinuityController {
     })
     this.resumeFlight = trackedFlight
     await trackedFlight
+    if (
+      !resumed ||
+      this.suspension !== suspension ||
+      this.machine.state !== 'suspended' ||
+      !this.isCurrentGeneration(suspension.generation)
+    ) {
+      return
+    }
+    this.clearPendingRecovery()
+    this.transition({ type: 'playback-resumed', generation: suspension.generation })
+    this.scheduleMonitoring()
   }
 
   private clearSuspension(): void {
@@ -654,11 +671,7 @@ class DefaultContinuityController implements ContinuityController {
       return
     }
 
-    if (
-      event.type === 'playing' &&
-      this.machine.state !== 'warming' &&
-      this.machine.state !== 'suspended'
-    ) {
+    if (event.type === 'playing' && this.machine.state !== 'warming') {
       this.hardLatencySamples = 0
       this.clearPendingRecovery()
       this.transition({ type: 'playback-resumed', generation: event.generation })

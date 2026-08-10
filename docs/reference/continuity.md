@@ -102,10 +102,11 @@ type PlaybackSuspensionReason = 'browser-suspended' | 'autoplay-blocked'
 
 ### `resume()`
 
-在 `suspended` 状态下重试 `play()`。不处于挂起状态时是空操作。浏览器仍以
-`AbortError` / `NotAllowedError` 拒绝时保持挂起，等待下一次可见性变化或 `resume()`；其他
-失败抛出脱敏的 `SourceTransitionError`。页面可见性触发的自动重试若遇到其他失败，则离开
-挂起状态并进入有界恢复流程。
+在 `suspended` 状态下重试 `play()`。不处于挂起状态时是空操作。`play()` 成功即离开挂起
+回到 `playing`，不等待后续媒体事件。浏览器仍以 `AbortError` / `NotAllowedError` 拒绝时
+保持挂起，等待下一次可见性变化或 `resume()`；其他失败抛出脱敏的
+`SourceTransitionError`。页面可见性触发的自动重试若遇到其他失败，则离开挂起状态并进入
+有界恢复流程。
 
 ### `cancelRecovery(generation)`
 

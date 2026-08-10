@@ -309,7 +309,10 @@ class DefaultContinuityController {
             await this.resumeFlight;
             return;
         }
-        const flight = this.adapter.play().catch((error) => {
+        let resumed = false;
+        const flight = this.adapter.play().then(() => {
+            resumed = true;
+        }, (error) => {
             const errorName = sanitizeErrorName(error);
             if (this.classifyPlayRejection(error, errorName) === null) {
                 throw new SourceTransitionError('play', suspension.generation, errorName);
@@ -322,6 +325,15 @@ class DefaultContinuityController {
         });
         this.resumeFlight = trackedFlight;
         await trackedFlight;
+        if (!resumed ||
+            this.suspension !== suspension ||
+            this.machine.state !== 'suspended' ||
+            !this.isCurrentGeneration(suspension.generation)) {
+            return;
+        }
+        this.clearPendingRecovery();
+        this.transition({ type: 'playback-resumed', generation: suspension.generation });
+        this.scheduleMonitoring();
     }
     clearSuspension() {
         this.suspension = null;
@@ -542,9 +554,7 @@ class DefaultContinuityController {
             this.scheduleRecovery('playback-error', 0, event.generation);
             return;
         }
-        if (event.type === 'playing' &&
-            this.machine.state !== 'warming' &&
-            this.machine.state !== 'suspended') {
+        if (event.type === 'playing' && this.machine.state !== 'warming') {
             this.hardLatencySamples = 0;
             this.clearPendingRecovery();
             this.transition({ type: 'playback-resumed', generation: event.generation });

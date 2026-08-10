@@ -40,6 +40,12 @@
   旧 generation 的异步续播完成也不会再清除新一代 suspension。
 - adapter 的 `play()` Promise resolve 不再提前建立 `playing` 与 `healthySince`，健康状态只由
   当前 generation 的首帧确认。
+- 挂起状态接受当前 generation 的 `playing` 事件并转入 `playing`。缓冲充足的视频在页面重新
+  可见后直接恢复播放时只发 `playing`（`readyState` 未下降，不会再有 `canplay`），控制器不会
+  再永久停留在 `suspended`，调用方的挂起提示也不会盖在正在播放的画面上。
+- 挂起重试的 `play()` 成功后直接转入 `playing`，不再等待后续媒体事件。挂起发生在换源提交
+  之后时，候选源恢复播放的 `playing` 只用于 adapter 内部的首帧判定、不会上抛，隐藏候选的
+  首帧回调又可能迟迟不触发，控制器同样不会再永久停留在 `suspended`。
 - 硬尾距恢复与卡顿恢复统一先尝试 `seek`，失败或次数耗尽后才请求换源；事件驱动的 seek
   同样校验全部播放指标，`strandedGapSeconds` 必须有限且非负。
 

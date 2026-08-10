@@ -446,11 +446,12 @@ describe('continuity suspension', () => {
 
   it('resumes playback by itself once the page becomes visible again', async () => {
     const adapter = new FakePlayerAdapter()
+    const clock = new FakeClock()
     const pageActivity = new FakePageActivity()
     const controller = createContinuityController({
       adapter,
       contractVersion: CONTRACT_VERSION,
-      clock: new FakeClock(),
+      clock,
       pageActivity,
     })
     adapter.failNextPlay(namedError('AbortError'))
@@ -459,16 +460,15 @@ describe('continuity suspension', () => {
     expect(controller.getSnapshot().state).toBe('suspended')
     expect(pageActivity.listenerCount).toBe(1)
 
+    clock.advanceBy(1_000)
     pageActivity.reveal()
-    await Promise.resolve()
-    await Promise.resolve()
+    for (let i = 0; i < 6; i += 1) await Promise.resolve()
 
     expect(controller.getSnapshot()).toMatchObject({
-      state: 'suspended',
-      healthySince: null,
+      state: 'playing',
+      suspension: null,
+      healthySince: clock.now(),
     })
-    adapter.emit({ type: 'first-frame', generation: 1 })
-    expect(controller.getSnapshot()).toMatchObject({ state: 'playing', suspension: null })
     expect(pageActivity.listenerCount).toBe(0)
 
     await controller.destroy()
@@ -488,14 +488,32 @@ describe('continuity suspension', () => {
 
     await controller.resume()
 
-    expect(controller.getSnapshot()).toMatchObject({
-      state: 'suspended',
-      healthySince: null,
-    })
-    adapter.emit({ type: 'playing', generation: 1 })
-    expect(controller.getSnapshot().state).toBe('suspended')
-    adapter.emit({ type: 'first-frame', generation: 1 })
     expect(controller.getSnapshot()).toMatchObject({ state: 'playing', suspension: null })
+
+    await controller.destroy()
+  })
+
+  it('leaves suspension when the browser resumes the media by itself', async () => {
+    const adapter = new FakePlayerAdapter()
+    const clock = new FakeClock()
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock,
+    })
+    adapter.failNextPlay(namedError('AbortError'))
+
+    await controller.setSource(SOURCE)
+    expect(controller.getSnapshot().state).toBe('suspended')
+
+    clock.advanceBy(1_000)
+    adapter.emit({ type: 'playing', generation: 1 })
+
+    expect(controller.getSnapshot()).toMatchObject({
+      state: 'playing',
+      suspension: null,
+      healthySince: clock.now(),
+    })
 
     await controller.destroy()
   })
@@ -516,11 +534,9 @@ describe('continuity suspension', () => {
     await controller.setSource(SOURCE)
     await retryStarted
     adapter.resolvePlaybackStart()
-    await Promise.resolve()
+    for (let i = 0; i < 6; i += 1) await Promise.resolve()
 
-    expect(controller.getSnapshot().state).toBe('suspended')
-    adapter.emit({ type: 'first-frame', generation: 1 })
-    expect(controller.getSnapshot().state).toBe('playing')
+    expect(controller.getSnapshot()).toMatchObject({ state: 'playing', suspension: null })
 
     await controller.destroy()
   })
