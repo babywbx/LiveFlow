@@ -499,6 +499,78 @@ describe('danmaku engine', () => {
     expect(engine.getMetrics().visible).toBe(1)
   })
 
+  it('preserves pending wait and duplicate windows across pause', () => {
+    const clock = new FakeClock()
+    const engine = createDanmakuEngine({
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      renderer: new RecordingRenderer(),
+      viewport: { width: 640, height: 32 },
+      policy: {
+        fixedDurationMs: 4_000,
+        maxPendingAgeMs: 1_500,
+        maxLaneWaitMs: 2_000,
+        duplicateWindowMs: 500,
+      },
+    })
+    const fixedMessage = (id: string): DanmakuMessage => ({
+      ...message(id),
+      text: 'same text',
+      mode: 'top',
+    })
+
+    engine.push({ ...fixedMessage('blocker'), text: 'blocker' })
+    clock.advanceBy(16)
+    engine.push(fixedMessage('waiting'))
+    engine.pause()
+    clock.advanceBy(1_000)
+
+    expect(engine.push(fixedMessage('duplicate'))).toEqual({
+      accepted: false,
+      reason: 'duplicate',
+    })
+
+    engine.resume()
+    clock.advanceBy(1_008)
+
+    expect(engine.getMetrics()).toMatchObject({
+      received: 3,
+      displayed: 1,
+      dropped: 1,
+      pendingDepth: 1,
+      droppedByReason: { duplicate: 1, expired: 0, noLane: 0 },
+    })
+
+    clock.advanceBy(512)
+
+    expect(engine.getMetrics()).toMatchObject({
+      dropped: 2,
+      pendingDepth: 0,
+      droppedByReason: { duplicate: 1, expired: 1, noLane: 0 },
+    })
+  })
+
+  it('shifts paused pushes only by their remaining pause time', () => {
+    const clock = new FakeClock()
+    const engine = createDanmakuEngine({
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      renderer: new RecordingRenderer(),
+      viewport: { width: 640, height: 32 },
+      limits: { maxIntakePerSecond: 1 },
+    })
+
+    engine.pause()
+    engine.clear()
+    clock.advanceBy(500)
+    expect(engine.push(message('paused'))).toEqual({ accepted: true })
+    clock.advanceBy(500)
+    engine.resume()
+    clock.advanceBy(1_000)
+
+    expect(engine.push(message('after-window'))).toEqual({ accepted: true })
+  })
+
   it('clears queued and visible messages without replacing the renderer', () => {
     const clock = new FakeClock()
     const renderer = new RecordingRenderer()

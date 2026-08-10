@@ -34,7 +34,7 @@ import {
 
 interface PendingMessage {
   readonly message: DanmakuMessage
-  readonly enqueuedAt: number
+  enqueuedAt: number
   expiresAt: number
   readonly sequence: number
   readonly sampleRank: number
@@ -112,7 +112,8 @@ export function createDanmakuEngine(options: DanmakuEngineOptions): DanmakuEngin
   return {
     push(input: DanmakuMessage): DanmakuPushResult {
       ensureActive()
-      const now = readNow()
+      const clockNow = readNow()
+      const now = pausedAt ?? clockNow
       let required
       try {
         required = validateRequiredMessageFields(input)
@@ -195,6 +196,7 @@ export function createDanmakuEngine(options: DanmakuEngineOptions): DanmakuEngin
         item.endAt += pausedDuration
       }
       for (const item of pending) {
+        item.enqueuedAt += pausedDuration
         item.expiresAt += pausedDuration
       }
       shiftTimes(intakeTimes, pausedDuration)

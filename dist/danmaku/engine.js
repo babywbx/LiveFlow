@@ -52,7 +52,8 @@ export function createDanmakuEngine(options) {
     return {
         push(input) {
             ensureActive();
-            const now = readNow();
+            const clockNow = readNow();
+            const now = pausedAt ?? clockNow;
             let required;
             try {
                 required = validateRequiredMessageFields(input);
@@ -133,6 +134,7 @@ export function createDanmakuEngine(options) {
                 item.endAt += pausedDuration;
             }
             for (const item of pending) {
+                item.enqueuedAt += pausedDuration;
                 item.expiresAt += pausedDuration;
             }
             shiftTimes(intakeTimes, pausedDuration);
