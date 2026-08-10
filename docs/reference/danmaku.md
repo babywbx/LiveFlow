@@ -21,6 +21,8 @@ const engine = createDanmakuEngine({
 
 `renderer` 是唯一渲染接缝。核心在每帧先通过 `measure()` 批量测量候选消息，再通过一次
 `render()` 交付挂载、位移和卸载命令。调用方不需要也不应为每条消息建立独立动画循环。
+成功测量的等待消息会复用尺寸，直到 `resize()` 统一失效缓存；暂时没有可用轨道不会导致
+每帧重复测量。
 
 `contractVersion` 必须等于根入口导出的 `CONTRACT_VERSION`。创建时不匹配会立即抛出
 `ContractVersionMismatchError`，不会尝试兼容猜测或创建调度资源。

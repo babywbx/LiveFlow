@@ -38,6 +38,7 @@ interface PendingMessage {
   expiresAt: number
   readonly sequence: number
   readonly sampleRank: number
+  measurement: DanmakuMeasurement | null
 }
 
 interface VisibleMessage {
@@ -152,6 +153,7 @@ export function createDanmakuEngine(options: DanmakuEngineOptions): DanmakuEngin
         expiresAt: now + policy.maxPendingAgeMs,
         sequence: nextSequence,
         sampleRank: stableSampleRank(sanitized.message.id),
+        measurement: null,
       }
       nextSequence += 1
       const retained = retainWithinCapacity(item)
@@ -233,6 +235,9 @@ export function createDanmakuEngine(options: DanmakuEngineOptions): DanmakuEngin
       policy = resolvedPolicy
       viewport = { ...nextViewport }
       laneCount = calculateLaneCount(viewport, policy)
+      for (const item of pending) {
+        item.measurement = null
+      }
       const unmounts: string[] = []
       const retained: VisibleMessage[] = []
       // O(n²) is bounded by maxVisible.
@@ -485,9 +490,11 @@ export function createDanmakuEngine(options: DanmakuEngineOptions): DanmakuEngin
         limits.maxDisplayPerSecond - displayTimes.length,
       ),
     )
-    const byId = new Map<string, DanmakuMeasurement>()
+    const measuredById = new Map<string, DanmakuMeasurement>()
+    const unmeasured = candidates.filter((item) => item.measurement === null)
     try {
-      const measurements = renderer.measure(candidates.map((item) => item.message))
+      const measurements =
+        unmeasured.length === 0 ? [] : renderer.measure(unmeasured.map((item) => item.message))
       if (!Array.isArray(measurements)) {
         throw new Error('measurement collection')
       }
@@ -517,7 +524,7 @@ export function createDanmakuEngine(options: DanmakuEngineOptions): DanmakuEngin
           Number.isFinite(height) &&
           height > 0
         ) {
-          byId.set(id, { id, width, height })
+          measuredById.set(id, { id, width, height })
         }
       }
     } catch {
@@ -534,7 +541,7 @@ export function createDanmakuEngine(options: DanmakuEngineOptions): DanmakuEngin
       if (pendingIndex < 0) {
         continue
       }
-      const measurement = byId.get(candidate.message.id)
+      const measurement = candidate.measurement ?? measuredById.get(candidate.message.id)
       if (measurement === undefined) {
         pending.splice(pendingIndex, 1)
         recordDrop('measurement-failed')
@@ -546,6 +553,7 @@ export function createDanmakuEngine(options: DanmakuEngineOptions): DanmakuEngin
         })
         continue
       }
+      candidate.measurement = measurement
       const laneSpan = Math.max(1, Math.ceil(measurement.height / policy.laneHeight))
       const lane = findLane(candidate.message.mode, laneSpan, now)
       if (lane === null) {

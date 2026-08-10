@@ -23,10 +23,12 @@ import { FakeClock } from '../fixtures/fake-clock.js'
 
 class RecordingRenderer implements DanmakuRenderer {
   readonly frames: DanmakuRenderFrame[] = []
+  readonly measuredIds: string[] = []
   paused = false
   destroyed = false
 
   measure(messages: readonly DanmakuMessage[]): readonly DanmakuMeasurement[] {
+    this.measuredIds.push(...messages.map((message) => message.id))
     return messages.map((message) => ({ id: message.id, width: 120, height: 24 }))
   }
 
@@ -522,6 +524,30 @@ describe('danmaku engine', () => {
     expect(engine.push(message('fresh'))).toEqual({ accepted: true })
     clock.advanceBy(16)
     expect(renderer.frames.at(-1)?.mounts[0]?.message.id).toBe('fresh')
+  })
+
+  it('measures a waiting message once until resize invalidates it', () => {
+    const clock = new FakeClock()
+    const renderer = new RecordingRenderer()
+    const engine = createDanmakuEngine({
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      renderer,
+      viewport: { width: 640, height: 32 },
+    })
+    const fixedMessage = (id: string): DanmakuMessage => ({ ...message(id), mode: 'top' })
+
+    engine.push(fixedMessage('blocker'))
+    clock.advanceBy(16)
+    engine.push(fixedMessage('waiting'))
+    clock.advanceBy(48)
+
+    expect(renderer.measuredIds.filter((id) => id === 'waiting')).toHaveLength(1)
+
+    engine.resize({ width: 640, height: 32 })
+    clock.advanceBy(16)
+
+    expect(renderer.measuredIds.filter((id) => id === 'waiting')).toHaveLength(2)
   })
 
   it('can retry pause after frame cancellation fails', () => {
