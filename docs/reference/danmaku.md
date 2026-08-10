@@ -35,6 +35,7 @@ interface DanmakuEngine {
   getMetrics(): DanmakuMetrics
   pause(): void
   resume(): void
+  clear(): void
   resize(viewport: DanmakuViewport, policy?: Partial<DanmakuPolicy>): void
   destroy(): void
 }
@@ -45,6 +46,8 @@ interface DanmakuEngine {
 - `getMetrics()` 返回计数器快照，不暴露内部可变集合。
 - `pause()` 停止唯一的帧调度器；重复暂停安全。
 - `resume()` 平移可见消息和等待消息的时间基准，暂停时间不会消耗展示时长。
+- `clear()` 取消帧任务并卸载全部等待与可见消息，但保留 renderer、累计指标和暂停状态；
+  清空后可以继续 `push()`，适合在路由切换或长时间进入后台后复用已有 DOM 池。
 - `resize()` 立即更新视口和轨道数量。缩小视口时，超出新轨道范围的可见消息会被卸载。
   传入第二个参数可同时改写策略，常见于字号变化导致轨道高度必须跟着变：省去销毁重建引擎，
   在途消息除放不下的以外都会保留。省略该参数时沿用当前策略；非法数值照常抛

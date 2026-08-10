@@ -125,6 +125,7 @@ export interface DanmakuEngine {
     getMetrics(): DanmakuMetrics;
     pause(): void;
     resume(): void;
+    clear(): void;
     resize(viewport: DanmakuViewport, policy?: Partial<DanmakuPolicy>): void;
     destroy(): void;
 }

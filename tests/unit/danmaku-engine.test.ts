@@ -497,6 +497,33 @@ describe('danmaku engine', () => {
     expect(engine.getMetrics().visible).toBe(1)
   })
 
+  it('clears queued and visible messages without replacing the renderer', () => {
+    const clock = new FakeClock()
+    const renderer = new RecordingRenderer()
+    const engine = createDanmakuEngine({
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      renderer,
+      viewport: { width: 640, height: 32 },
+      limits: { maxIntakePerSecond: 2 },
+    })
+
+    engine.push(message('visible'))
+    clock.advanceBy(16)
+    engine.push(message('queued'))
+
+    engine.clear()
+
+    expect(engine.getMetrics()).toMatchObject({ pendingDepth: 0, visible: 0 })
+    expect(renderer.frames.at(-1)?.unmounts).toEqual(['visible'])
+    expect(renderer.destroyed).toBe(false)
+    expect(clock.pendingTaskCount()).toBe(0)
+
+    expect(engine.push(message('fresh'))).toEqual({ accepted: true })
+    clock.advanceBy(16)
+    expect(renderer.frames.at(-1)?.mounts[0]?.message.id).toBe('fresh')
+  })
+
   it('can retry pause after frame cancellation fails', () => {
     const clock = new ThrowingCancelClock()
     const renderer = new RecordingRenderer()

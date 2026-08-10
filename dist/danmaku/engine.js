@@ -141,6 +141,21 @@ export function createDanmakuEngine(options) {
             });
             scheduleFrame();
         },
+        clear() {
+            ensureActive();
+            const now = pausedAt ?? readNow();
+            const unmounts = visible.map((item) => item.message.id);
+            cancelFrame();
+            pending.length = 0;
+            visible.length = 0;
+            intakeTimes.length = 0;
+            displayTimes.length = 0;
+            if (unmounts.length > 0) {
+                callRenderer('clear', () => {
+                    renderer.render({ timestamp: now, mounts: [], updates: [], unmounts });
+                });
+            }
+        },
         resize(nextViewport, nextPolicy) {
             ensureActive();
             validateViewport(nextViewport);
