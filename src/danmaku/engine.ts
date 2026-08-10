@@ -211,8 +211,6 @@ export function createDanmakuEngine(options: DanmakuEngineOptions): DanmakuEngin
       cancelFrame()
       pending.length = 0
       visible.length = 0
-      intakeTimes.length = 0
-      displayTimes.length = 0
       if (unmounts.length > 0) {
         callRenderer('clear', () => {
           renderer.render({ timestamp: now, mounts: [], updates: [], unmounts })

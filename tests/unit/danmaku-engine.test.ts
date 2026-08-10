@@ -507,7 +507,6 @@ describe('danmaku engine', () => {
       clock,
       renderer,
       viewport: { width: 640, height: 32 },
-      limits: { maxIntakePerSecond: 2 },
     })
 
     engine.push(message('visible'))
@@ -524,6 +523,26 @@ describe('danmaku engine', () => {
     expect(engine.push(message('fresh'))).toEqual({ accepted: true })
     clock.advanceBy(16)
     expect(renderer.frames.at(-1)?.mounts[0]?.message.id).toBe('fresh')
+  })
+
+  it('keeps one-second rate budgets across clear', () => {
+    const clock = new FakeClock()
+    const engine = createDanmakuEngine({
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      renderer: new RecordingRenderer(),
+      viewport: { width: 640, height: 64 },
+      limits: { maxIntakePerSecond: 2, maxDisplayPerSecond: 1 },
+    })
+
+    expect(engine.push(message('first'))).toEqual({ accepted: true })
+    clock.advanceBy(16)
+    engine.clear()
+    expect(engine.push(message('second'))).toEqual({ accepted: true })
+    clock.advanceBy(16)
+
+    expect(engine.getMetrics()).toMatchObject({ displayed: 1, pendingDepth: 1 })
+    expect(engine.push(message('third'))).toEqual({ accepted: false, reason: 'input-rate' })
   })
 
   it('measures a waiting message once until resize invalidates it', () => {
