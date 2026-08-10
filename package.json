@@ -1,6 +1,6 @@
 {
   "name": "@babywbx/liveflow",
-  "version": "1.4.0",
+  "version": "2.0.0",
   "private": true,
   "description": "A browser-side live playback and realtime overlay stack.",
   "license": "MIT",
