@@ -303,4 +303,39 @@ describe('DOM danmaku renderer lifecycle', () => {
     expect(sliceCalls).toBe(0)
     renderer.destroy()
   })
+
+  it('does not split emoji graphemes at the text limit', () => {
+    const fixture = createDomFixture(false, 0)
+    const renderer = createDomDanmakuRenderer({
+      container: fixture.container,
+      maxTextLength: 10,
+    })
+    renderer.render({
+      timestamp: 0,
+      mounts: [
+        {
+          message: {
+            id: 'emoji',
+            receivedAt: 0,
+            text: `aaaaaaa👨‍👩‍👧‍👦`,
+            mode: 'scroll',
+            priority: 0,
+          },
+          lane: 0,
+          x: 320,
+          y: 0,
+          width: 120,
+          height: 24,
+        },
+      ],
+      updates: [],
+      unmounts: [],
+    })
+
+    expect(
+      fixture.elements.find((element) => element.className === 'liveflow-danmaku__text')
+        ?.textContent,
+    ).toBe('aaaaaaa')
+    renderer.destroy()
+  })
 })

@@ -5,6 +5,7 @@ const DEFAULT_MAX_POOL_SIZE = 96;
 const DEFAULT_MAX_BADGES = 4;
 const DEFAULT_MAX_TEXT_LENGTH = 500;
 const DEFAULT_MAX_MEASUREMENTS = 8;
+let graphemeSegmenter = null;
 export function createDomDanmakuRenderer(options) {
     const maxPoolSize = validatePositiveInteger(options.maxPoolSize, DEFAULT_MAX_POOL_SIZE, 'maxPoolSize');
     const maxBadges = validatePositiveInteger(options.maxBadgesPerMessage, DEFAULT_MAX_BADGES, 'maxBadgesPerMessage');
@@ -279,7 +280,7 @@ export function createDomDanmakuRenderer(options) {
         }
         const text = document.createElement('span');
         text.className = 'liveflow-danmaku__text';
-        text.textContent = message.text.slice(0, maxTextLength);
+        text.textContent = truncateGraphemeSafe(message.text, maxTextLength);
         text.style.color = resolveAccessibleTextColor(message.color, options.backgroundColor, options.fallbackTextColor, minimumContrastRatio);
         root.append(text);
     }
@@ -407,6 +408,18 @@ function resetRoot(root) {
 }
 function resetElement(element) {
     element.replaceChildren();
+}
+function truncateGraphemeSafe(value, maxLength) {
+    if (value.length <= maxLength)
+        return value;
+    graphemeSegmenter ??= new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+    let truncated = '';
+    for (const entry of graphemeSegmenter.segment(value)) {
+        if (truncated.length + entry.segment.length > maxLength)
+            break;
+        truncated += entry.segment;
+    }
+    return truncated;
 }
 function removeElement(element) {
     try {

@@ -27,6 +27,8 @@ const DEFAULT_MAX_BADGES = 4
 const DEFAULT_MAX_TEXT_LENGTH = 500
 const DEFAULT_MAX_MEASUREMENTS = 8
 
+let graphemeSegmenter: Intl.Segmenter | null = null
+
 export function createDomDanmakuRenderer(options: DomDanmakuRendererOptions): DanmakuRenderer {
   const maxPoolSize = validatePositiveInteger(
     options.maxPoolSize,
@@ -330,7 +332,7 @@ export function createDomDanmakuRenderer(options: DomDanmakuRendererOptions): Da
 
     const text = document.createElement('span')
     text.className = 'liveflow-danmaku__text'
-    text.textContent = message.text.slice(0, maxTextLength)
+    text.textContent = truncateGraphemeSafe(message.text, maxTextLength)
     text.style.color = resolveAccessibleTextColor(
       message.color,
       options.backgroundColor,
@@ -472,6 +474,17 @@ function resetRoot(root: HTMLDivElement): void {
 
 function resetElement(element: HTMLElement): void {
   element.replaceChildren()
+}
+
+function truncateGraphemeSafe(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value
+  graphemeSegmenter ??= new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+  let truncated = ''
+  for (const entry of graphemeSegmenter.segment(value)) {
+    if (truncated.length + entry.segment.length > maxLength) break
+    truncated += entry.segment
+  }
+  return truncated
 }
 
 function removeElement(element: HTMLElement): boolean {
