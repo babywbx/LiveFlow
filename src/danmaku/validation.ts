@@ -29,6 +29,7 @@ export const DEFAULT_DANMAKU_POLICY: Readonly<DanmakuPolicy> = {
   laneHeight: 32,
   laneGap: 12,
   scrollPixelsPerSecond: 140,
+  scrollOverlapStartRatio: 0,
   fixedDurationMs: 4_000,
   maxPendingAgeMs: 8_000,
   maxLaneWaitMs: 2_000,
@@ -83,7 +84,39 @@ export function resolvePolicy(input: Partial<DanmakuPolicy> | undefined): Danmak
     ...input,
   }
 
-  for (const [key, value] of Object.entries(policy)) {
+  const { scrollDurationMs, scrollDurationJitterMs, scrollOverlapStartRatio, ...positivePolicy } =
+    policy
+  if (
+    scrollDurationMs !== undefined &&
+    scrollDurationMs !== null &&
+    (!Number.isFinite(scrollDurationMs) || scrollDurationMs < 1)
+  ) {
+    throw new InvalidDanmakuConfigurationError('policy.scrollDurationMs')
+  }
+  if (
+    scrollDurationJitterMs !== undefined &&
+    scrollDurationJitterMs !== null &&
+    (!Number.isFinite(scrollDurationJitterMs) || scrollDurationJitterMs < 0)
+  ) {
+    throw new InvalidDanmakuConfigurationError('policy.scrollDurationJitterMs')
+  }
+  if (
+    !Number.isFinite(scrollOverlapStartRatio) ||
+    scrollOverlapStartRatio < 0 ||
+    scrollOverlapStartRatio > 1
+  ) {
+    throw new InvalidDanmakuConfigurationError('policy.scrollOverlapStartRatio')
+  }
+  if (
+    scrollDurationMs !== undefined &&
+    scrollDurationMs !== null &&
+    scrollDurationJitterMs !== undefined &&
+    scrollDurationJitterMs !== null &&
+    !Number.isFinite(scrollDurationMs + scrollDurationJitterMs)
+  ) {
+    throw new InvalidDanmakuConfigurationError('policy.scrollDurationJitterMs')
+  }
+  for (const [key, value] of Object.entries(positivePolicy)) {
     if (!Number.isFinite(value) || value <= 0) {
       throw new InvalidDanmakuConfigurationError(`policy.${key}`)
     }

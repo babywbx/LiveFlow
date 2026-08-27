@@ -139,6 +139,100 @@ describe('danmaku engine resize policy', () => {
     engine.destroy()
   })
 
+  it('keeps same-lane scrolling messages after their spacing changes', () => {
+    const clock = new FakeClock()
+    const unmounts: string[] = []
+    const renderer: Parameters<typeof createDanmakuEngine>[0]['renderer'] = {
+      measure: (messages) =>
+        messages.map((message) => ({
+          id: message.id,
+          width: message.id === 'trailing' ? 200 : 50,
+          height: 20,
+        })),
+      render(frame): void {
+        unmounts.push(...frame.unmounts)
+      },
+      resize: () => {},
+      setPaused: () => {},
+      destroy: () => {},
+    }
+    const engine = createDanmakuEngine({
+      contractVersion: CONTRACT_VERSION,
+      renderer,
+      clock,
+      viewport: { width: 400, height: 32 },
+      policy: { laneHeight: 32, laneGap: 12, scrollDurationMs: 4_000 },
+    })
+
+    engine.push({ id: 'leading', receivedAt: 0, text: 'leading', mode: 'scroll', priority: 0 })
+    clock.advanceBy(16)
+    engine.push({ id: 'trailing', receivedAt: 0, text: 'trailing', mode: 'scroll', priority: 0 })
+    clock.advanceBy(1_600)
+
+    expect(engine.getMetrics().visible).toBe(2)
+    engine.resize({ width: 400, height: 32 })
+    expect(engine.getMetrics().visible).toBe(2)
+    expect(unmounts).toEqual([])
+
+    engine.destroy()
+  })
+
+  it('preserves the overlap guard when the viewport shrinks', () => {
+    const clock = new FakeClock()
+    const positions = new Map<string, number>()
+    const unmounts: string[] = []
+    const renderer: Parameters<typeof createDanmakuEngine>[0]['renderer'] = {
+      measure: (messages) =>
+        messages.map((message) => ({
+          id: message.id,
+          width: message.id === 'trailing' ? 280 : 100,
+          height: 20,
+        })),
+      render(frame): void {
+        for (const mount of frame.mounts) positions.set(mount.message.id, mount.x)
+        for (const update of frame.updates) positions.set(update.id, update.x)
+        unmounts.push(...frame.unmounts)
+      },
+      resize: () => {},
+      setPaused: () => {},
+      destroy: () => {},
+    }
+    const engine = createDanmakuEngine({
+      contractVersion: CONTRACT_VERSION,
+      renderer,
+      clock,
+      viewport: { width: 2_560, height: 32 },
+      policy: {
+        laneHeight: 32,
+        laneGap: 20,
+        scrollDurationMs: 4_000,
+        scrollOverlapStartRatio: 0.82,
+      },
+    })
+
+    engine.push({ id: 'leading', receivedAt: 0, text: 'leading', mode: 'scroll', priority: 0 })
+    clock.advanceBy(16)
+    engine.push({ id: 'trailing', receivedAt: 0, text: 'trailing', mode: 'scroll', priority: 0 })
+    clock.advanceBy(400)
+    expect(engine.getMetrics().visible).toBe(2)
+
+    engine.resize({ width: 400, height: 32 }, { scrollOverlapStartRatio: 0.65 })
+    const leadingX = readPosition(positions, 'leading')
+    const trailingX = readPosition(positions, 'trailing')
+    const leadingSpeed = 500 / 4_000
+    const trailingSpeed = 680 / 4_000
+    const guardX = 400 * (1 - 0.65)
+    const gapAtGuard =
+      trailingX -
+      (leadingX + 100) -
+      ((trailingX - guardX) * (trailingSpeed - leadingSpeed)) / trailingSpeed
+
+    expect(engine.getMetrics().visible).toBe(2)
+    expect(unmounts).toEqual([])
+    expect(gapAtGuard).toBeGreaterThanOrEqual(20 - Number.EPSILON)
+    engine.destroy()
+  })
+
   it('rebases every scrolling item to the new speed', () => {
     const clock = new FakeClock()
     const positions = new Map<string, number>()
@@ -192,6 +286,91 @@ describe('danmaku engine resize policy', () => {
     engine.destroy()
   })
 
+  it('keeps scrolling progress through viewport size changes', () => {
+    const clock = new FakeClock()
+    const positions = new Map<string, number>()
+    const renderer: Parameters<typeof createDanmakuEngine>[0]['renderer'] = {
+      measure: (messages) => messages.map((message) => ({ id: message.id, width: 50, height: 20 })),
+      render(frame): void {
+        for (const mount of frame.mounts) positions.set(mount.message.id, mount.x)
+        for (const update of frame.updates) positions.set(update.id, update.x)
+      },
+      resize: () => {},
+      setPaused: () => {},
+      destroy: () => {},
+    }
+    const engine = createDanmakuEngine({
+      contractVersion: CONTRACT_VERSION,
+      renderer,
+      clock,
+      viewport: { width: 600, height: 32 },
+      policy: { laneHeight: 32, scrollDurationMs: 8_000 },
+    })
+
+    engine.push({ id: 'a', receivedAt: 0, text: 'a', mode: 'scroll', priority: 0 })
+    clock.advanceBy(2_992)
+    const before = readPosition(positions, 'a')
+    const progressBefore = (600 - before) / 650
+
+    for (const [width, duration] of [
+      [800, 9_000],
+      [1_200, 11_000],
+      [2_000, 17_000],
+      [400, 8_000],
+    ] as const) {
+      engine.resize({ width, height: 32 }, { scrollDurationMs: duration })
+      const after = readPosition(positions, 'a')
+      const progressAfter = (width - after) / (width + 50)
+      expect(progressAfter).toBeCloseTo(progressBefore, 6)
+    }
+    engine.destroy()
+  })
+
+  it('keeps duration jitter stable through resize and can return to pixels per second', () => {
+    const clock = new FakeClock()
+    const positions = new Map<string, number>()
+    const renderer: Parameters<typeof createDanmakuEngine>[0]['renderer'] = {
+      measure: (messages) => messages.map((message) => ({ id: message.id, width: 50, height: 20 })),
+      render(frame): void {
+        for (const mount of frame.mounts) positions.set(mount.message.id, mount.x)
+        for (const update of frame.updates) positions.set(update.id, update.x)
+      },
+      resize: () => {},
+      setPaused: () => {},
+      destroy: () => {},
+    }
+    const engine = createDanmakuEngine({
+      contractVersion: CONTRACT_VERSION,
+      renderer,
+      clock,
+      viewport: { width: 400, height: 32 },
+      policy: { scrollDurationMs: 4_000, scrollDurationJitterMs: 1_000 },
+    })
+
+    engine.push({ id: 'a', receivedAt: 0, text: 'a', mode: 'scroll', priority: 0 })
+    clock.advanceBy(16)
+    const firstStart = readPosition(positions, 'a')
+    clock.advanceBy(512)
+    const firstDistance = firstStart - readPosition(positions, 'a')
+
+    engine.resize({ width: 400, height: 32 }, { laneGap: 8 })
+    const secondStart = readPosition(positions, 'a')
+    clock.advanceBy(512)
+    const secondDistance = secondStart - readPosition(positions, 'a')
+
+    expect(secondDistance).toBeCloseTo(firstDistance, 6)
+
+    engine.resize(
+      { width: 400, height: 32 },
+      { scrollDurationMs: null, scrollDurationJitterMs: null, scrollPixelsPerSecond: 100 },
+    )
+    const before = readPosition(positions, 'a')
+    clock.advanceBy(1_008)
+
+    expect(before - readPosition(positions, 'a')).toBeCloseTo(100.8, 6)
+    engine.destroy()
+  })
+
   it('keeps paused motion frozen and publishes resized positions', () => {
     const clock = new FakeClock()
     const positions = new Map<string, { readonly x: number; readonly y: number }>()
@@ -219,7 +398,7 @@ describe('danmaku engine resize policy', () => {
 
     engine.push({ id: 'scroll', receivedAt: 0, text: 'scroll', mode: 'scroll', priority: 0 })
     engine.push({ id: 'bottom', receivedAt: 0, text: 'bottom', mode: 'bottom', priority: 0 })
-    clock.advanceBy(1_000)
+    clock.advanceBy(1_008)
     engine.pause()
     const scrollBefore = positions.get('scroll')
     if (scrollBefore === undefined) {
@@ -242,8 +421,8 @@ describe('danmaku engine resize policy', () => {
     if (scrollAfterResume === undefined) {
       throw new Error('Missing resumed scroll position.')
     }
-    expect(scrollBefore.x - scrollAfterResume.x).toBeGreaterThan(0)
-    expect(scrollBefore.x - scrollAfterResume.x).toBeLessThan(5)
+    expect(scrollAfterResize.x - scrollAfterResume.x).toBeGreaterThan(0)
+    expect(scrollAfterResize.x - scrollAfterResume.x).toBeLessThan(5)
 
     engine.destroy()
   })

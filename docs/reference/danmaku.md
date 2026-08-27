@@ -22,7 +22,7 @@ const engine = createDanmakuEngine({
 `renderer` 是唯一渲染接缝。核心在每帧先通过 `measure()` 批量测量候选消息，再通过一次
 `render()` 交付挂载、位移和卸载命令。调用方不需要也不应为每条消息建立独立动画循环。
 成功测量的等待消息会复用尺寸，直到 `resize()` 统一失效缓存；暂时没有可用轨道不会导致
-每帧重复测量。
+每帧重复测量。`measure()` 可以只返回请求消息的成功子集；省略的消息会保留并在后续帧重试。
 
 `contractVersion` 必须等于根入口导出的 `CONTRACT_VERSION`。创建时不匹配会立即抛出
 `ContractVersionMismatchError`，不会尝试兼容猜测或创建调度资源。
@@ -54,7 +54,8 @@ interface DanmakuEngine {
 - `resize()` 立即更新视口和轨道数量。缩小视口时，超出新轨道范围的可见消息会被卸载。
   传入第二个参数可同时改写策略，常见于字号变化导致轨道高度必须跟着变：省去销毁重建引擎，
   在途消息除放不下的以外都会保留。省略该参数时沿用当前策略；非法数值照常抛
-  `InvalidDanmakuConfigurationError`。
+  `InvalidDanmakuConfigurationError`。固定通过时长模式会把在途滚动消息按行程进度映射到新
+  宽度；固定像素速度模式则保留当前绝对横坐标。
 - `destroy()` 取消帧任务并清空全部有界集合。重复销毁安全。销毁后的其他调用会抛错。
 
 引擎在空闲且没有等待消息时不申请动画帧。
@@ -146,20 +147,49 @@ interface DanmakuIdentity {
 
 ## 默认调度策略
 
-| 字段                    |   默认值 | 含义                                       |
-| ----------------------- | -------: | ------------------------------------------ |
-| `laneHeight`            |    32 px | 轨道基准高度                               |
-| `laneGap`               |    12 px | 同轨滚动消息的最小安全距离                 |
-| `scrollPixelsPerSecond` | 140 px/s | 滚动速度                                   |
-| `fixedDurationMs`       |  4000 ms | 顶部和底部消息的展示时长                   |
-| `maxPendingAgeMs`       |  8000 ms | 最长等待时间                               |
-| `maxLaneWaitMs`         |  2000 ms | 因无轨道、显示限速或可见上限等待的最长时间 |
-| `duplicateWindowMs`     |   500 ms | 普通短消息去重窗口                         |
-| `frameBudgetMs`         |     8 ms | 单帧预算诊断阈值                           |
+| 字段                      |   默认值 | 含义                                       |
+| ------------------------- | -------: | ------------------------------------------ |
+| `laneHeight`              |    32 px | 轨道基准高度                               |
+| `laneGap`                 |    12 px | 同轨滚动消息的最小安全距离                 |
+| `scrollPixelsPerSecond`   | 140 px/s | 未设置滚动时长时的滚动速度                 |
+| `scrollDurationMs`        |   未设置 | 可选的整条滚动消息通过时长                 |
+| `scrollDurationJitterMs`  |   未设置 | 可选的逐条稳定时长扰动上限                 |
+| `scrollOverlapStartRatio` |        0 | 更快后条允许追近前条前的视口行程比例       |
+| `fixedDurationMs`         |  4000 ms | 顶部和底部消息的展示时长                   |
+| `maxPendingAgeMs`         |  8000 ms | 最长等待时间                               |
+| `maxLaneWaitMs`           |  2000 ms | 因无轨道、显示限速或可见上限等待的最长时间 |
+| `duplicateWindowMs`       |   500 ms | 普通短消息去重窗口                         |
+| `frameBudgetMs`           |     8 ms | 单帧预算诊断阈值                           |
+
+滚动距离 `distance = viewportWidth + messageWidth`。未设置 `scrollDurationMs` 时，基础时长为
+`distance / scrollPixelsPerSecond × 1000` 毫秒；设置后则直接使用该值，且不得小于 `1 ms`。
+最终时长和速度为：
+
+```text
+duration = baseDuration + scrollDurationJitterMs × stableHash(messageId) / 2^32
+pixelsPerMillisecond = distance / duration
+```
+
+`stableHash` 是对消息 ID 的 UTF-16 code unit 计算的无符号 32 位 FNV-1a，散列比例处于
+`[0, 1)`，同一消息 ID 的扰动在 resize 前后保持稳定。统一基础时长会让更宽的消息以更高像素
+速度通过画面。`scrollDurationMs` 与 `scrollDurationJitterMs` 都可以在 `resize()` 中设为 `null`
+清除，恢复未设置状态。
 
 顶部、底部和滚动消息共享物理轨道占用检查，因此不会在同一垂直区域互相覆盖。顶部消息从
 上向下选择轨道，底部消息从下向上选择轨道。滚动消息只有在前一条尾部越过安全距离后才会
-进入相同轨道。
+进入相同轨道。之后各条消息继续按自己的速度移动，间距会自然扩大或缩小。
+
+`scrollOverlapStartRatio` 必须位于 `[0, 1]`。当前条速度为 `leadingSpeed`、待发后条速度为
+`trailingSpeed` 时，引擎只在入轨选择阶段计算一次所需间距：
+
+```text
+closingSpeed = max(0, trailingSpeed - leadingSpeed)
+requiredGap = laneGap
+  + scrollOverlapStartRatio × viewportWidth × closingSpeed / trailingSpeed
+```
+
+后条不更快时仍只要求 `laneGap`。后条更快时，该公式保证它的左边缘走完配置比例的视口宽度
+以前不会追进安全距离；越过该位置后允许间距自然缩短。默认比例 `0` 不增加额外间距。
 
 等待队列满时，引擎先比较优先级，再使用由消息 ID 计算的稳定采样顺序。高优先级消息可以
 替换较低优先级消息；相同输入集合产生相同的普通消息保留结果。队列绝不会因突发输入扩容。

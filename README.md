@@ -647,16 +647,17 @@ const tracks = multiviewGridTracks(spec) // { gridTemplateColumns, gridTemplateR
 
 **弹幕上限与调度策略** —— `DEFAULT_DANMAKU_LIMITS`、`DEFAULT_DANMAKU_POLICY`：
 
-| 上限                  | 默认值 | 策略                    |     默认值 |
-| --------------------- | -----: | ----------------------- | ---------: |
-| `maxPending`          |  `200` | `laneHeight`            |    `32` px |
-| `maxVisible`          |   `80` | `laneGap`               |    `12` px |
-| `maxPoolSize`         |   `96` | `scrollPixelsPerSecond` | `140` px/s |
-| `maxTextLength`       |  `500` | `fixedDurationMs`       |     `4000` |
-| `maxBadgesPerMessage` |    `4` | `maxPendingAgeMs`       |     `8000` |
-| `maxMountsPerFrame`   |    `8` | `maxLaneWaitMs`         |     `2000` |
-| `maxIntakePerSecond`  |  `120` | `duplicateWindowMs`     |      `500` |
-| `maxDisplayPerSecond` |   `60` | `frameBudgetMs`         |        `8` |
+| 上限                  | 默认值 | 策略                      |     默认值 |
+| --------------------- | -----: | ------------------------- | ---------: |
+| `maxPending`          |  `200` | `laneHeight`              |    `32` px |
+| `maxVisible`          |   `80` | `laneGap`                 |    `12` px |
+| `maxPoolSize`         |   `96` | `scrollPixelsPerSecond`   | `140` px/s |
+| `maxTextLength`       |  `500` | `fixedDurationMs`         |     `4000` |
+| `maxBadgesPerMessage` |    `4` | `maxPendingAgeMs`         |     `8000` |
+| `maxMountsPerFrame`   |    `8` | `maxLaneWaitMs`           |     `2000` |
+| `maxIntakePerSecond`  |  `120` | `duplicateWindowMs`       |      `500` |
+| `maxDisplayPerSecond` |   `60` | `frameBudgetMs`           |        `8` |
+|                       |        | `scrollOverlapStartRatio` |        `0` |
 
 `metadata` 的 entries 与数组元素共用 `maxMetadataKeys`（`16`）预算，另外受
 `maxMetadataDepth`（`2`）和 `maxMetadataBytes`（`2048`）约束。

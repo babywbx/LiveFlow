@@ -148,6 +148,9 @@ export interface DanmakuPolicy {
   readonly laneHeight: number
   readonly laneGap: number
   readonly scrollPixelsPerSecond: number
+  readonly scrollDurationMs?: number | null
+  readonly scrollDurationJitterMs?: number | null
+  readonly scrollOverlapStartRatio: number
   readonly fixedDurationMs: number
   readonly maxPendingAgeMs: number
   readonly maxLaneWaitMs: number

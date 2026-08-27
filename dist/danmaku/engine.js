@@ -21,6 +21,7 @@ export function createDanmakuEngine(options) {
         throw new InvalidDanmakuConfigurationError('clock.now');
     }
     let nextSequence = 1;
+    let measurementFrame = 0;
     let frameHandle = null;
     let pausedAt = null;
     let destroyed = false;
@@ -94,6 +95,7 @@ export function createDanmakuEngine(options) {
                 sequence: nextSequence,
                 sampleRank: stableSampleRank(sanitized.message.id),
                 measurement: null,
+                measuredAtFrame: 0,
             };
             nextSequence += 1;
             const retained = retainWithinCapacity(item);
@@ -164,9 +166,13 @@ export function createDanmakuEngine(options) {
             const clockNow = readNow();
             const now = pausedAt ?? clockNow;
             const scrollPositions = new Map();
+            const scrollProgress = new Map();
+            const previousLaneSpans = new Map();
             for (const item of visible) {
+                previousLaneSpans.set(item, item.laneSpan);
                 if (item.message.mode === 'scroll') {
                     scrollPositions.set(item, positionAt(item, now).x);
+                    scrollProgress.set(item, progressAt(item, now));
                 }
             }
             policy = resolvedPolicy;
@@ -174,17 +180,22 @@ export function createDanmakuEngine(options) {
             laneCount = calculateLaneCount(viewport, policy);
             for (const item of pending) {
                 item.measurement = null;
+                item.measuredAtFrame = 0;
             }
+            for (const item of visible) {
+                const previousX = scrollPositions.get(item);
+                const previousProgress = scrollProgress.get(item);
+                if (previousX !== undefined && previousProgress !== undefined) {
+                    rebaseScrollPosition(item, previousX, previousProgress, now);
+                }
+                item.laneSpan = Math.max(1, Math.ceil(item.height / policy.laneHeight));
+            }
+            reflowScrollOverlap(now);
             const unmounts = [];
             const retained = [];
             for (const item of visible) {
-                const previousX = scrollPositions.get(item);
-                if (previousX !== undefined) {
-                    rebaseScrollPosition(item, previousX, now);
-                }
-                item.laneSpan = Math.max(1, Math.ceil(item.height / policy.laneHeight));
                 if (item.lane + item.laneSpan > laneCount ||
-                    retained.some((existing) => visibleItemsConflict(item, existing, now))) {
+                    retained.some((existing) => visibleItemsConflict(item, existing, now, previousLaneSpans))) {
                     unmounts.push(item.message.id);
                     recordDrop('no-lane');
                 }
@@ -400,9 +411,19 @@ export function createDanmakuEngine(options) {
             dropTimedOutLaneWaiters(now, 'visible-capacity');
             return [];
         }
-        const candidates = pending.slice(0, Math.min(pending.length, limits.maxMountsPerFrame, limits.maxVisible - visible.length, limits.maxDisplayPerSecond - displayTimes.length));
+        const mountCapacity = Math.min(limits.maxMountsPerFrame, limits.maxVisible - visible.length, limits.maxDisplayPerSecond - displayTimes.length);
+        measurementFrame += 1;
+        const unmeasured = [];
+        for (const item of pending) {
+            if (item.measurement === null && item.measuredAtFrame <= measurementFrame)
+                unmeasured.push(item);
+            if (unmeasured.length >= limits.maxMountsPerFrame)
+                break;
+        }
+        const retryFrame = measurementFrame + Math.ceil(pending.length / limits.maxMountsPerFrame);
+        for (const item of unmeasured)
+            item.measuredAtFrame = retryFrame;
         const measuredById = new Map();
-        const unmeasured = candidates.filter((item) => item.measurement === null);
         try {
             const measurements = unmeasured.length === 0 ? [] : renderer.measure(unmeasured.map((item) => item.message));
             if (!Array.isArray(measurements)) {
@@ -414,7 +435,7 @@ export function createDanmakuEngine(options) {
                 measurementCount < 0) {
                 throw new Error('measurement collection');
             }
-            const retainedCount = Math.min(measurementCount, limits.maxMountsPerFrame);
+            const retainedCount = Math.min(measurementCount, unmeasured.length);
             for (let index = 0; index < retainedCount; index += 1) {
                 const measurement = measurements[index];
                 if (typeof measurement !== 'object' || measurement === null) {
@@ -438,47 +459,47 @@ export function createDanmakuEngine(options) {
             failRenderer('measure');
             return [];
         }
+        for (const candidate of unmeasured) {
+            const measurement = measuredById.get(candidate.message.id);
+            if (measurement !== undefined)
+                candidate.measurement = measurement;
+        }
         const mounts = [];
-        for (const candidate of candidates) {
-            if (mounts.length >= limits.maxMountsPerFrame) {
+        let pendingIndex = 0;
+        while (pendingIndex < pending.length && mounts.length < mountCapacity) {
+            const candidate = pending[pendingIndex];
+            if (candidate === undefined)
                 break;
-            }
-            const pendingIndex = pending.findIndex((item) => item.sequence === candidate.sequence);
-            if (pendingIndex < 0) {
+            const measurement = candidate.measurement;
+            if (measurement === null) {
+                pendingIndex += 1;
                 continue;
             }
-            const measurement = candidate.measurement ?? measuredById.get(candidate.message.id);
-            if (measurement === undefined) {
-                pending.splice(pendingIndex, 1);
-                recordDrop('measurement-failed');
-                emitDiagnostic({
-                    scope: 'danmaku',
-                    code: 'measurement-failed',
-                    level: 'warn',
-                    detail: { messageId: candidate.message.id },
-                });
-                continue;
-            }
-            candidate.measurement = measurement;
             const laneSpan = Math.max(1, Math.ceil(measurement.height / policy.laneHeight));
-            const lane = findLane(candidate.message.mode, laneSpan, now);
+            const duration = candidate.message.mode === 'scroll'
+                ? scrollDuration(measurement.width, candidate.sampleRank)
+                : policy.fixedDurationMs;
+            const scrollSpeed = candidate.message.mode === 'scroll' ? (viewport.width + measurement.width) / duration : 0;
+            const lane = findLane(candidate.message.mode, laneSpan, scrollSpeed, now);
             if (lane === null) {
                 if (now - candidate.enqueuedAt >= policy.maxLaneWaitMs) {
                     pending.splice(pendingIndex, 1);
                     recordDrop('no-lane');
                 }
+                else {
+                    pendingIndex += 1;
+                }
                 continue;
             }
             pending.splice(pendingIndex, 1);
-            const duration = candidate.message.mode === 'scroll'
-                ? ((viewport.width + measurement.width) / policy.scrollPixelsPerSecond) * 1_000
-                : policy.fixedDurationMs;
             const item = {
                 message: candidate.message,
+                sampleRank: candidate.sampleRank,
                 lane,
                 laneSpan,
                 width: measurement.width,
                 height: measurement.height,
+                scrollPixelsPerMs: scrollSpeed,
                 startAt: now,
                 endAt: now + duration,
             };
@@ -506,26 +527,26 @@ export function createDanmakuEngine(options) {
             }
         }
     }
-    function findLane(mode, span, now) {
+    function findLane(mode, span, scrollSpeed, now) {
         if (span > laneCount) {
             return null;
         }
         if (mode === 'bottom') {
             for (let lane = laneCount - span; lane >= 0; lane -= 1) {
-                if (laneIsAvailable(lane, span, mode, now)) {
+                if (laneIsAvailable(lane, span, mode, scrollSpeed, now)) {
                     return lane;
                 }
             }
             return null;
         }
         for (let lane = 0; lane <= laneCount - span; lane += 1) {
-            if (laneIsAvailable(lane, span, mode, now)) {
+            if (laneIsAvailable(lane, span, mode, scrollSpeed, now)) {
                 return lane;
             }
         }
         return null;
     }
-    function laneIsAvailable(lane, span, mode, now) {
+    function laneIsAvailable(lane, span, mode, scrollSpeed, now) {
         for (const item of visible) {
             if (!spansOverlap(lane, span, item.lane, item.laneSpan)) {
                 continue;
@@ -534,18 +555,27 @@ export function createDanmakuEngine(options) {
                 return false;
             }
             const position = positionAt(item, now);
-            if (position.x + item.width > viewport.width - policy.laneGap) {
+            const gap = viewport.width - (position.x + item.width);
+            const requiredGap = requiredScrollGap(policy.scrollOverlapStartRatio * viewport.width, scrollSpeed, item.scrollPixelsPerMs);
+            if (gap < requiredGap) {
                 return false;
             }
         }
         return true;
     }
-    function visibleItemsConflict(candidate, existing, now) {
+    function visibleItemsConflict(candidate, existing, now, previousLaneSpans) {
         if (!spansOverlap(candidate.lane, candidate.laneSpan, existing.lane, existing.laneSpan)) {
             return false;
         }
         if (candidate.message.mode !== 'scroll' || existing.message.mode !== 'scroll') {
             return true;
+        }
+        const candidatePreviousSpan = previousLaneSpans.get(candidate);
+        const existingPreviousSpan = previousLaneSpans.get(existing);
+        if (candidatePreviousSpan !== undefined &&
+            existingPreviousSpan !== undefined &&
+            spansOverlap(candidate.lane, candidatePreviousSpan, existing.lane, existingPreviousSpan)) {
+            return false;
         }
         const candidateX = positionAt(candidate, now).x;
         const existingX = positionAt(existing, now).x;
@@ -570,17 +600,72 @@ export function createDanmakuEngine(options) {
                 y,
             };
         }
-        const progress = Math.min(1, Math.max(0, (now - item.startAt) / (item.endAt - item.startAt)));
+        const elapsed = Math.min(item.endAt, Math.max(item.startAt, now)) - item.startAt;
         return {
-            x: viewport.width - progress * (viewport.width + item.width),
+            x: viewport.width - elapsed * item.scrollPixelsPerMs,
             y,
         };
     }
-    function rebaseScrollPosition(item, x, now) {
-        const duration = ((viewport.width + item.width) / policy.scrollPixelsPerSecond) * 1_000;
-        const progress = Math.min(1, Math.max(0, (viewport.width - x) / (viewport.width + item.width)));
-        item.startAt = now - progress * duration;
+    function scrollDuration(width, sampleRank) {
+        return ((policy.scrollDurationMs ??
+            ((viewport.width + width) / policy.scrollPixelsPerSecond) * 1_000) +
+            (policy.scrollDurationJitterMs ?? 0) * (sampleRank / 0x1_0000_0000));
+    }
+    function progressAt(item, now) {
+        const elapsed = Math.min(item.endAt, Math.max(item.startAt, now)) - item.startAt;
+        return elapsed / (item.endAt - item.startAt);
+    }
+    function rebaseScrollPosition(item, x, previousProgress, now) {
+        const progress = policy.scrollDurationMs === undefined || policy.scrollDurationMs === null
+            ? Math.min(1, Math.max(0, (viewport.width - x) / (viewport.width + item.width)))
+            : previousProgress;
+        setScrollProgress(item, progress, now);
+    }
+    function reflowScrollOverlap(now) {
+        if (policy.scrollOverlapStartRatio <= 0)
+            return;
+        const guardX = viewport.width * (1 - policy.scrollOverlapStartRatio);
+        for (let trailingIndex = visible.length - 1; trailingIndex >= 0; trailingIndex -= 1) {
+            const trailing = visible[trailingIndex];
+            if (trailing === undefined ||
+                trailing.message.mode !== 'scroll' ||
+                trailing.lane + trailing.laneSpan > laneCount) {
+                continue;
+            }
+            const trailingX = positionAt(trailing, now).x;
+            if (trailingX < guardX)
+                continue;
+            for (let leadingIndex = trailingIndex - 1; leadingIndex >= 0; leadingIndex -= 1) {
+                const leading = visible[leadingIndex];
+                if (leading === undefined ||
+                    leading.message.mode !== 'scroll' ||
+                    leading.lane + leading.laneSpan > laneCount ||
+                    !spansOverlap(trailing.lane, trailing.laneSpan, leading.lane, leading.laneSpan)) {
+                    continue;
+                }
+                const leadingX = positionAt(leading, now).x;
+                const requiredGap = requiredScrollGap(trailingX - guardX, trailing.scrollPixelsPerMs, leading.scrollPixelsPerMs);
+                const gap = trailingX - (leadingX + leading.width);
+                if (gap >= requiredGap)
+                    continue;
+                const nextX = leadingX - (requiredGap - gap);
+                const progress = (viewport.width - nextX) / (viewport.width + leading.width);
+                setScrollProgress(leading, progress, now);
+            }
+        }
+    }
+    function requiredScrollGap(protectedDistance, trailingSpeed, leadingSpeed) {
+        const closingSpeed = trailingSpeed - leadingSpeed;
+        return closingSpeed <= 0
+            ? policy.laneGap
+            : policy.laneGap + (protectedDistance * closingSpeed) / trailingSpeed;
+    }
+    function setScrollProgress(item, progress, now) {
+        const duration = scrollDuration(item.width, item.sampleRank);
+        const boundedProgress = Math.min(1, Math.max(0, progress));
+        item.startAt = now - boundedProgress * duration;
         item.endAt = item.startAt + duration;
+        item.scrollPixelsPerMs = (viewport.width + item.width) / duration;
     }
     function callRenderer(phase, operation) {
         try {

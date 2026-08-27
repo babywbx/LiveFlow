@@ -731,6 +731,65 @@ describe('danmaku engine', () => {
     expect(engine.getMetrics().visible).toBe(1)
   })
 
+  it('retries measurements omitted by the renderer', () => {
+    const clock = new FakeClock()
+    const renderer = new RecordingRenderer()
+    renderer.measure = (messages): readonly DanmakuMeasurement[] => {
+      const first = messages[0]
+      return first === undefined ? [] : [{ id: first.id, width: 120, height: 24 }]
+    }
+    const engine = createDanmakuEngine({
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      renderer,
+      viewport: { width: 640, height: 64 },
+      limits: { maxMountsPerFrame: 2 },
+    })
+
+    engine.push(message('first'))
+    engine.push(message('second'))
+    clock.advanceBy(16)
+    expect(engine.getMetrics()).toMatchObject({
+      visible: 1,
+      pendingDepth: 1,
+      droppedByReason: { measurementFailed: 0 },
+    })
+
+    clock.advanceBy(16)
+    expect(engine.getMetrics()).toMatchObject({
+      visible: 2,
+      pendingDepth: 0,
+      droppedByReason: { measurementFailed: 0 },
+    })
+  })
+
+  it('rotates past consecutive omitted measurements', () => {
+    const clock = new FakeClock()
+    const renderer = new RecordingRenderer()
+    const measuredBatches: string[][] = []
+    renderer.measure = (messages): readonly DanmakuMeasurement[] => {
+      measuredBatches.push(messages.map((item) => item.id))
+      return messages
+        .filter((item) => item.id === 'good')
+        .map((item) => ({ id: item.id, width: 120, height: 24 }))
+    }
+    const engine = createDanmakuEngine({
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      renderer,
+      viewport: { width: 640, height: 96 },
+      limits: { maxMountsPerFrame: 2 },
+    })
+
+    engine.push(message('bad-a'))
+    engine.push(message('bad-b'))
+    engine.push(message('good'))
+    clock.advanceBy(32)
+
+    expect(measuredBatches).toEqual([['bad-a', 'bad-b'], ['good']])
+    expect(engine.getMetrics()).toMatchObject({ visible: 1, pendingDepth: 2 })
+  })
+
   it('rejects an unsafe measurement length before reading an entry', () => {
     const clock = new FakeClock()
     let entryReads = 0
