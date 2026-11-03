@@ -337,6 +337,37 @@ describe('continuity suspension', () => {
     await controller.destroy()
   })
 
+  it('keeps a pending recovery when the failed source is aborted before it runs', async () => {
+    const adapter = new FakePlayerAdapter()
+    const clock = new FakeClock()
+    const pageActivity = new FakePageActivity()
+    const recoveries: string[] = []
+    const playStarted = adapter.deferPlaybackStart()
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      pageActivity,
+      onRecoveryRequest: (request) => {
+        recoveries.push(request.reason)
+      },
+    })
+
+    const sourceChange = controller.setSource(SOURCE)
+    await playStarted
+    adapter.emit({ type: 'error', generation: 1, code: 'media-error-0', recoverable: true })
+    adapter.rejectPlaybackStart(namedError('AbortError'))
+    await sourceChange
+
+    expect(controller.getSnapshot()).toMatchObject({ state: 'degraded', suspension: null })
+    expect(pageActivity.listenerCount).toBe(0)
+    clock.advanceBy(0)
+    expect(recoveries).toEqual(['playback-error'])
+    expect(controller.getSnapshot().state).toBe('recovering')
+
+    await controller.destroy()
+  })
+
   it('does not watch page activity after a suspension listener replaces the source', async () => {
     const adapter = new FakePlayerAdapter()
     const pageActivity = new FakePageActivity()

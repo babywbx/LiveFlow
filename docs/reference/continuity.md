@@ -100,6 +100,9 @@ type PlaybackSuspensionReason = 'browser-suspended' | 'autoplay-blocked'
 被丢弃。传入 `pageActivity` 时页面重新可见会自动续播；否则调用方在用户手势里调用
 `resume()`。
 
+只有 `warming` 与 `playing` 会进入挂起。控制器已经记录故障并安排恢复（`degraded`）时，
+清理故障候选源打断的 `play()` 不改变状态，恢复照常进行。
+
 ### `resume()`
 
 在 `suspended` 状态下重试 `play()`。不处于挂起状态时是空操作。`play()` 成功即离开挂起

@@ -105,9 +105,7 @@ export function reduceContinuityState(current, event) {
                 state: 'recovering',
             };
         case 'playback-suspended':
-            if (current.state !== 'warming' &&
-                current.state !== 'playing' &&
-                current.state !== 'degraded') {
+            if (current.state !== 'warming' && current.state !== 'playing') {
                 return current;
             }
             return {
