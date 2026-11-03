@@ -461,7 +461,12 @@ interface DanmakuMetadata {
 
 type DanmakuMetadataEntry = readonly [string, DanmakuMetadataValue]
 type DanmakuMetadataValue =
-  number | string | boolean | null | readonly DanmakuMetadataValue[] | DanmakuMetadata
+  | number
+  | string
+  | boolean
+  | null
+  | readonly DanmakuMetadataValue[]
+  | DanmakuMetadata
 
 interface DanmakuIdentity {
   kind: string
