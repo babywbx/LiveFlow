@@ -102,6 +102,7 @@ export interface DanmakuPushResult {
     readonly accepted: boolean;
     readonly reason?: DanmakuDropReason;
 }
+export type DanmakuLaneSelection = 'first-fit' | 'freest';
 export interface DanmakuPolicy {
     readonly laneHeight: number;
     readonly laneGap: number;
@@ -109,6 +110,7 @@ export interface DanmakuPolicy {
     readonly scrollDurationMs?: number | null;
     readonly scrollDurationJitterMs?: number | null;
     readonly scrollOverlapStartRatio: number;
+    readonly scrollLaneSelection?: DanmakuLaneSelection;
     readonly fixedDurationMs: number;
     readonly maxPendingAgeMs: number;
     readonly maxLaneWaitMs: number;

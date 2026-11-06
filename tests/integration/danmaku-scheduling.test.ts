@@ -207,6 +207,49 @@ describe('danmaku scheduling', () => {
     engine.destroy()
   })
 
+  it('sends scrolling messages to the freest lane only when asked', () => {
+    const lanesFor = (scrollLaneSelection: 'first-fit' | 'freest'): number[] => {
+      const clock = new FakeClock()
+      const renderer = new SizedRenderer()
+      const engine = createDanmakuEngine({
+        contractVersion: CONTRACT_VERSION,
+        clock,
+        renderer,
+        viewport: { width: 320, height: 96 },
+        policy: { laneHeight: 32, laneGap: 20, scrollDurationMs: 4_000, scrollLaneSelection },
+      })
+      for (const [id, waitMs] of [
+        ['a', 1_500],
+        ['b', 1_500],
+        ['c', 200],
+        ['d', 16],
+      ] as const) {
+        engine.push(message(id))
+        clock.advanceBy(waitMs)
+      }
+      engine.destroy()
+      return renderer.frames.flatMap((frame) => frame.mounts.map((item) => item.lane))
+    }
+
+    expect(lanesFor('first-fit')).toEqual([0, 0, 0, 1])
+    expect(lanesFor('freest')).toEqual([0, 1, 2, 0])
+  })
+
+  it('rejects unknown lane selections', () => {
+    const policy = {}
+    Reflect.set(policy, 'scrollLaneSelection', 'random')
+
+    expect(() =>
+      createDanmakuEngine({
+        contractVersion: CONTRACT_VERSION,
+        clock: new FakeClock(),
+        renderer: new SizedRenderer(),
+        viewport: { width: 320, height: 32 },
+        policy,
+      }),
+    ).toThrow('policy.scrollLaneSelection')
+  })
+
   it('keeps faster followers apart until the configured overlap window', () => {
     const clock = new FakeClock()
     const renderer = new SizedRenderer()

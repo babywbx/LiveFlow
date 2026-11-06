@@ -17,6 +17,7 @@ export const DEFAULT_DANMAKU_POLICY = {
     laneGap: 12,
     scrollPixelsPerSecond: 140,
     scrollOverlapStartRatio: 0,
+    scrollLaneSelection: 'first-fit',
     fixedDurationMs: 4_000,
     maxPendingAgeMs: 8_000,
     maxLaneWaitMs: 2_000,
@@ -45,7 +46,12 @@ export function resolvePolicy(input) {
         ...DEFAULT_DANMAKU_POLICY,
         ...input,
     };
-    const { scrollDurationMs, scrollDurationJitterMs, scrollOverlapStartRatio, ...positivePolicy } = policy;
+    const { scrollDurationMs, scrollDurationJitterMs, scrollOverlapStartRatio, scrollLaneSelection, ...positivePolicy } = policy;
+    if (scrollLaneSelection !== undefined &&
+        scrollLaneSelection !== 'first-fit' &&
+        scrollLaneSelection !== 'freest') {
+        throw new InvalidDanmakuConfigurationError('policy.scrollLaneSelection');
+    }
     if (scrollDurationMs !== undefined &&
         scrollDurationMs !== null &&
         (!Number.isFinite(scrollDurationMs) || scrollDurationMs < 1)) {

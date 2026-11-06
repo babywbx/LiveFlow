@@ -533,35 +533,45 @@ export function createDanmakuEngine(options) {
         }
         if (mode === 'bottom') {
             for (let lane = laneCount - span; lane >= 0; lane -= 1) {
-                if (laneIsAvailable(lane, span, mode, scrollSpeed, now)) {
+                if (laneSlack(lane, span, mode, scrollSpeed, now) >= 0) {
                     return lane;
                 }
             }
             return null;
         }
+        const freest = mode === 'scroll' && policy.scrollLaneSelection === 'freest';
+        let bestLane = null;
+        let bestSlack = -1;
         for (let lane = 0; lane <= laneCount - span; lane += 1) {
-            if (laneIsAvailable(lane, span, mode, scrollSpeed, now)) {
+            const slack = laneSlack(lane, span, mode, scrollSpeed, now);
+            if (slack < 0)
+                continue;
+            if (!freest)
                 return lane;
+            if (slack > bestSlack) {
+                bestLane = lane;
+                bestSlack = slack;
             }
         }
-        return null;
+        return bestLane;
     }
-    function laneIsAvailable(lane, span, mode, scrollSpeed, now) {
+    function laneSlack(lane, span, mode, scrollSpeed, now) {
+        let slack = Number.POSITIVE_INFINITY;
         for (const item of visible) {
             if (!spansOverlap(lane, span, item.lane, item.laneSpan)) {
                 continue;
             }
             if (mode !== 'scroll' || item.message.mode !== 'scroll') {
-                return false;
+                return -1;
             }
             const position = positionAt(item, now);
             const gap = viewport.width - (position.x + item.width);
             const requiredGap = requiredScrollGap(policy.scrollOverlapStartRatio * viewport.width, scrollSpeed, item.scrollPixelsPerMs);
-            if (gap < requiredGap) {
-                return false;
-            }
+            slack = Math.min(slack, gap - requiredGap);
+            if (slack < 0)
+                return slack;
         }
-        return true;
+        return slack;
     }
     function visibleItemsConflict(candidate, existing, now, previousLaneSpans) {
         if (!spansOverlap(candidate.lane, candidate.laneSpan, existing.lane, existing.laneSpan)) {

@@ -13,6 +13,7 @@ export type {
   DanmakuEngine,
   DanmakuEngineOptions,
   DanmakuIdentity,
+  DanmakuLaneSelection,
   DanmakuLimits,
   DanmakuMeasurement,
   DanmakuMessage,

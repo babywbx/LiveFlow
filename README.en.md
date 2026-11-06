@@ -680,17 +680,18 @@ mutually contradictory values throw a typed configuration error instead of being
 
 **Danmaku limits and policy** — `DEFAULT_DANMAKU_LIMITS`, `DEFAULT_DANMAKU_POLICY`:
 
-| Limit                 | Default | Policy                    |    Default |
-| --------------------- | ------: | ------------------------- | ---------: |
-| `maxPending`          |   `200` | `laneHeight`              |    `32` px |
-| `maxVisible`          |    `80` | `laneGap`                 |    `12` px |
-| `maxPoolSize`         |    `96` | `scrollPixelsPerSecond`   | `140` px/s |
-| `maxTextLength`       |   `500` | `fixedDurationMs`         |     `4000` |
-| `maxBadgesPerMessage` |     `4` | `maxPendingAgeMs`         |     `8000` |
-| `maxMountsPerFrame`   |     `8` | `maxLaneWaitMs`           |     `2000` |
-| `maxIntakePerSecond`  |   `120` | `duplicateWindowMs`       |      `500` |
-| `maxDisplayPerSecond` |    `60` | `frameBudgetMs`           |        `8` |
-|                       |         | `scrollOverlapStartRatio` |        `0` |
+| Limit                 | Default | Policy                    |       Default |
+| --------------------- | ------: | ------------------------- | ------------: |
+| `maxPending`          |   `200` | `laneHeight`              |       `32` px |
+| `maxVisible`          |    `80` | `laneGap`                 |       `12` px |
+| `maxPoolSize`         |    `96` | `scrollPixelsPerSecond`   |    `140` px/s |
+| `maxTextLength`       |   `500` | `fixedDurationMs`         |        `4000` |
+| `maxBadgesPerMessage` |     `4` | `maxPendingAgeMs`         |        `8000` |
+| `maxMountsPerFrame`   |     `8` | `maxLaneWaitMs`           |        `2000` |
+| `maxIntakePerSecond`  |   `120` | `duplicateWindowMs`       |         `500` |
+| `maxDisplayPerSecond` |    `60` | `frameBudgetMs`           |           `8` |
+|                       |         | `scrollOverlapStartRatio` |           `0` |
+|                       |         | `scrollLaneSelection`     | `'first-fit'` |
 
 Metadata entries and array items share the `maxMetadataKeys` (`16`) budget and are additionally
 bounded by `maxMetadataDepth` (`2`) and `maxMetadataBytes` (`2048`).

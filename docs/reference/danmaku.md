@@ -152,19 +152,20 @@ interface DanmakuIdentity {
 
 ## 默认调度策略
 
-| 字段                      |   默认值 | 含义                                       |
-| ------------------------- | -------: | ------------------------------------------ |
-| `laneHeight`              |    32 px | 轨道基准高度                               |
-| `laneGap`                 |    12 px | 同轨滚动消息的最小安全距离                 |
-| `scrollPixelsPerSecond`   | 140 px/s | 未设置滚动时长时的滚动速度                 |
-| `scrollDurationMs`        |   未设置 | 可选的整条滚动消息通过时长                 |
-| `scrollDurationJitterMs`  |   未设置 | 可选的逐条稳定时长扰动上限                 |
-| `scrollOverlapStartRatio` |        0 | 更快后条允许追近前条前的视口行程比例       |
-| `fixedDurationMs`         |  4000 ms | 顶部和底部消息的展示时长                   |
-| `maxPendingAgeMs`         |  8000 ms | 最长等待时间                               |
-| `maxLaneWaitMs`           |  2000 ms | 因无轨道、显示限速或可见上限等待的最长时间 |
-| `duplicateWindowMs`       |   500 ms | 普通短消息去重窗口                         |
-| `frameBudgetMs`           |     8 ms | 单帧预算诊断阈值                           |
+| 字段                      |    默认值 | 含义                                       |
+| ------------------------- | --------: | ------------------------------------------ |
+| `laneHeight`              |     32 px | 轨道基准高度                               |
+| `laneGap`                 |     12 px | 同轨滚动消息的最小安全距离                 |
+| `scrollPixelsPerSecond`   |  140 px/s | 未设置滚动时长时的滚动速度                 |
+| `scrollDurationMs`        |    未设置 | 可选的整条滚动消息通过时长                 |
+| `scrollDurationJitterMs`  |    未设置 | 可选的逐条稳定时长扰动上限                 |
+| `scrollOverlapStartRatio` |         0 | 更快后条允许追近前条前的视口行程比例       |
+| `scrollLaneSelection`     | first-fit | 滚动消息的选轨方式                         |
+| `fixedDurationMs`         |   4000 ms | 顶部和底部消息的展示时长                   |
+| `maxPendingAgeMs`         |   8000 ms | 最长等待时间                               |
+| `maxLaneWaitMs`           |   2000 ms | 因无轨道、显示限速或可见上限等待的最长时间 |
+| `duplicateWindowMs`       |    500 ms | 普通短消息去重窗口                         |
+| `frameBudgetMs`           |      8 ms | 单帧预算诊断阈值                           |
 
 滚动距离 `distance = viewportWidth + messageWidth`。未设置 `scrollDurationMs` 时，基础时长为
 `distance / scrollPixelsPerSecond × 1000` 毫秒；设置后则直接使用该值，且不得小于 `1 ms`。
@@ -183,6 +184,17 @@ pixelsPerMillisecond = distance / duration
 顶部、底部和滚动消息共享物理轨道占用检查，因此不会在同一垂直区域互相覆盖。顶部消息从
 上向下选择轨道，底部消息从下向上选择轨道。滚动消息只有在前一条尾部越过安全距离后才会
 进入相同轨道。之后各条消息继续按自己的速度移动，间距会自然扩大或缩小。
+
+`scrollLaneSelection` 决定滚动消息在多条可用轨道中选哪一条：
+
+- `first-fit`（默认）：从上到下取第一条可用轨道。消息稀疏时会集中在上方几条轨道，下方
+  轨道留出成块空白。
+- `freest`：取余量最大的轨道。空轨道优先，按从上到下的顺序；没有空轨道时，选前条尾部
+  超出所需间距最多的轨道。消息稀疏时会均匀分布到整个区域。需要弹幕只占画面上方时，应
+  缩小视口高度。
+
+两种方式的可用性判定和吞吐相同，只改变分布。顶部与底部消息不受此项影响。该项可以在
+`resize()` 中更新。
 
 `scrollOverlapStartRatio` 必须位于 `[0, 1]`。当前条速度为 `leadingSpeed`、待发后条速度为
 `trailingSpeed` 时，引擎只在入轨选择阶段计算一次所需间距：
