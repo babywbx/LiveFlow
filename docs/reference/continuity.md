@@ -100,6 +100,11 @@ type PlaybackSuspensionReason = 'browser-suspended' | 'autoplay-blocked'
 被丢弃。传入 `pageActivity` 时页面重新可见会自动续播；否则调用方在用户手势里调用
 `resume()`。
 
+例外是 `warming` 阶段的 `autoplay-blocked`：本代候选源还没有发出 `ready` 时，媒体未必
+可用，`sourceWarmupTimeoutMs` 超时继续计时。期间候选源发出 `ready` 或 `resume()` 成功，
+超时即取消，保持原有挂起语义；超时仍未缓冲时，控制器清除挂起、丢弃候选源、进入
+`degraded`，并以 `source-timeout` 请求恢复，不会一直等待手势去重试一个已失效的源。
+
 只有 `warming` 与 `playing` 会进入挂起。控制器已经记录故障并安排恢复（`degraded`）时，
 清理故障候选源打断的 `play()` 不改变状态，恢复照常进行。
 

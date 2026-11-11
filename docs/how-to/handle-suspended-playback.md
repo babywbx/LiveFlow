@@ -53,10 +53,18 @@ if (snapshot.suspension?.reason === 'autoplay-blocked') {
 挂起，等待下一次机会。其他播放失败会抛出脱敏的 `SourceTransitionError`，应按真实媒体故障
 处理。
 
+被拦时源还没有缓冲到可播放的，控制器不会无限期等待手势：`sourceWarmupTimeoutMs` 到期后
+离开挂起，以 `source-timeout` 请求恢复。按钮应跟随 `snapshot.suspension` 显示和隐藏，
+这样用户随后的点按作用于新的候选源。
+
+在 iOS 上，一次点按如果同时让隐藏的控件显示出来，WebKit 可能只派发 `touchend` 而不派发
+`click`。宿主有这类交互时，应在 `touchend` 里同样调用 `resume()`。
+
 ## 不要把挂起当失败
 
-调用方常见的错误是：看到播放没起来就重新取流地址、重建播放器。挂起状态下媒体已经就绪，
-重建只会浪费带宽并可能触发上游限流。判断是否需要重连请读 `snapshot.state` 与
-`snapshot.suspension`，判断播放是否真的健康请读 `snapshot.healthySince`。
+调用方常见的错误是：看到播放没起来就重新取流地址、重建播放器。挂起状态下媒体通常已经
+就绪，重建只会浪费带宽并可能触发上游限流；未缓冲的源由控制器按超时自行换源。判断是否需要
+重连请读 `snapshot.state` 与 `snapshot.suspension`，判断播放是否真的健康请读
+`snapshot.healthySince`。
 
 相关参考：[连续性 API](../reference/continuity.md)、[错误](../reference/errors.md)。
