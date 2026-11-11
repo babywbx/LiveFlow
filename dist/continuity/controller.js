@@ -46,6 +46,7 @@ class DefaultContinuityController {
     suspension = null;
     unsubscribePageActivity = null;
     resumeFlight = null;
+    readyGeneration = null;
     constructor(adapter, clock, policy, onRecoveryRequest, diagnostics, pageActivity) {
         this.adapter = adapter;
         this.clock = clock;
@@ -73,6 +74,7 @@ class DefaultContinuityController {
         this.outstandingRecoveries = 0;
         this.applyPlaybackRateForSourceChange();
         const generation = this.machine.generation + 1;
+        this.readyGeneration = null;
         this.transition({ type: 'source-requested', generation });
         this.scheduleSourceTimeout(generation);
         let prepared;
@@ -201,7 +203,11 @@ class DefaultContinuityController {
         if (!this.isCurrentGeneration(generation)) {
             return;
         }
-        this.cancelSourceTimeout();
+        if (reason !== 'autoplay-blocked' ||
+            this.machine.state !== 'warming' ||
+            this.readyGeneration === generation) {
+            this.cancelSourceTimeout();
+        }
         const previousSuspension = this.suspension;
         const suspension = { reason, generation };
         this.suspension = suspension;
@@ -332,6 +338,7 @@ class DefaultContinuityController {
             return;
         }
         this.clearPendingRecovery();
+        this.cancelSourceTimeout();
         this.transition({ type: 'playback-resumed', generation: suspension.generation });
         this.scheduleMonitoring();
     }
@@ -465,6 +472,13 @@ class DefaultContinuityController {
                     currentGeneration: this.machine.generation,
                 },
             });
+            return;
+        }
+        if (event.type === 'ready') {
+            this.readyGeneration = event.generation;
+            if (this.machine.state === 'suspended') {
+                this.cancelSourceTimeout();
+            }
             return;
         }
         if (event.type === 'first-frame') {
@@ -1095,7 +1109,10 @@ class DefaultContinuityController {
             if (timedOutPrepared !== null) {
                 void this.discardAfterTransitionFailure(timedOutPrepared, generation, 'source-timeout');
             }
-            if (this.machine.state !== 'resolving' && this.machine.state !== 'warming') {
+            if (this.machine.state === 'suspended') {
+                this.clearSuspension();
+            }
+            else if (this.machine.state !== 'resolving' && this.machine.state !== 'warming') {
                 return;
             }
             this.transition({

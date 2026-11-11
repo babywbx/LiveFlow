@@ -95,6 +95,7 @@ class DefaultContinuityController implements ContinuityController {
   private suspension: PlaybackSuspension | null = null
   private unsubscribePageActivity: (() => void) | null = null
   private resumeFlight: Promise<void> | null = null
+  private readyGeneration: number | null = null
 
   constructor(
     private readonly adapter: LivePlayerAdapter,
@@ -129,6 +130,7 @@ class DefaultContinuityController implements ContinuityController {
     this.outstandingRecoveries = 0
     this.applyPlaybackRateForSourceChange()
     const generation = this.machine.generation + 1
+    this.readyGeneration = null
     this.transition({ type: 'source-requested', generation })
     this.scheduleSourceTimeout(generation)
 
@@ -271,7 +273,14 @@ class DefaultContinuityController implements ContinuityController {
     if (!this.isCurrentGeneration(generation)) {
       return
     }
-    this.cancelSourceTimeout()
+    // Unbuffered blocked sources may be dead; keep the deadline.
+    if (
+      reason !== 'autoplay-blocked' ||
+      this.machine.state !== 'warming' ||
+      this.readyGeneration === generation
+    ) {
+      this.cancelSourceTimeout()
+    }
     const previousSuspension = this.suspension
     const suspension: PlaybackSuspension = { reason, generation }
     this.suspension = suspension
@@ -409,6 +418,7 @@ class DefaultContinuityController implements ContinuityController {
       return
     }
     this.clearPendingRecovery()
+    this.cancelSourceTimeout()
     this.transition({ type: 'playback-resumed', generation: suspension.generation })
     this.scheduleMonitoring()
   }
@@ -564,6 +574,14 @@ class DefaultContinuityController implements ContinuityController {
           currentGeneration: this.machine.generation,
         },
       })
+      return
+    }
+
+    if (event.type === 'ready') {
+      this.readyGeneration = event.generation
+      if (this.machine.state === 'suspended') {
+        this.cancelSourceTimeout()
+      }
       return
     }
 
@@ -1297,7 +1315,9 @@ class DefaultContinuityController implements ContinuityController {
       if (timedOutPrepared !== null) {
         void this.discardAfterTransitionFailure(timedOutPrepared, generation, 'source-timeout')
       }
-      if (this.machine.state !== 'resolving' && this.machine.state !== 'warming') {
+      if (this.machine.state === 'suspended') {
+        this.clearSuspension()
+      } else if (this.machine.state !== 'resolving' && this.machine.state !== 'warming') {
         return
       }
 

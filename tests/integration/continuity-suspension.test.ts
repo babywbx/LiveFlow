@@ -127,6 +127,168 @@ describe('continuity suspension', () => {
     await controller.destroy()
   })
 
+  it('fails over a blocked autoplay whose source never buffers', async () => {
+    const adapter = new FakePlayerAdapter()
+    const clock = new FakeClock()
+    const recoveries: string[] = []
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      policy: { sourceWarmupTimeoutMs: 1_000 },
+      onRecoveryRequest: (request) => {
+        recoveries.push(request.reason)
+      },
+    })
+    adapter.failNextPlay(namedError('NotAllowedError'))
+
+    await controller.setSource(SOURCE)
+    expect(controller.getSnapshot().suspension?.reason).toBe('autoplay-blocked')
+    clock.advanceBy(1_000)
+
+    expect(recoveries).toEqual(['source-timeout'])
+    expect(controller.getSnapshot()).toMatchObject({ state: 'recovering', suspension: null })
+
+    await controller.destroy()
+  })
+
+  it('keeps waiting for a gesture once the blocked source has buffered', async () => {
+    const adapter = new FakePlayerAdapter()
+    const clock = new FakeClock()
+    const recoveries: string[] = []
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      policy: { sourceWarmupTimeoutMs: 1_000 },
+      onRecoveryRequest: (request) => {
+        recoveries.push(request.reason)
+      },
+    })
+    adapter.failNextPlay(namedError('NotAllowedError'))
+
+    await controller.setSource(SOURCE)
+    adapter.emit({ type: 'ready', generation: 1 })
+    clock.advanceBy(5_000)
+
+    expect(recoveries).toEqual([])
+    expect(controller.getSnapshot()).toMatchObject({
+      state: 'suspended',
+      suspension: { reason: 'autoplay-blocked', generation: 1 },
+    })
+
+    await controller.destroy()
+  })
+
+  it('does not fail over a blocked source that buffered before play was refused', async () => {
+    const adapter = new FakePlayerAdapter()
+    const clock = new FakeClock()
+    const recoveries: string[] = []
+    const playStarted = adapter.deferPlaybackStart()
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      policy: { sourceWarmupTimeoutMs: 1_000 },
+      onRecoveryRequest: (request) => {
+        recoveries.push(request.reason)
+      },
+    })
+
+    const sourceChange = controller.setSource(SOURCE)
+    await playStarted
+    adapter.emit({ type: 'ready', generation: 1 })
+    adapter.rejectPlaybackStart(namedError('NotAllowedError'))
+    await sourceChange
+    clock.advanceBy(5_000)
+
+    expect(recoveries).toEqual([])
+    expect(controller.getSnapshot().state).toBe('suspended')
+
+    await controller.destroy()
+  })
+
+  it('keeps a power-save abort parked without a source deadline', async () => {
+    const adapter = new FakePlayerAdapter()
+    const clock = new FakeClock()
+    const recoveries: string[] = []
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      policy: { sourceWarmupTimeoutMs: 1_000 },
+      onRecoveryRequest: (request) => {
+        recoveries.push(request.reason)
+      },
+    })
+    adapter.failNextPlay(namedError('AbortError'))
+
+    await controller.setSource(SOURCE)
+    clock.advanceBy(5_000)
+
+    expect(recoveries).toEqual([])
+    expect(controller.getSnapshot().suspension?.reason).toBe('browser-suspended')
+
+    await controller.destroy()
+  })
+
+  it('fails over a gesture resume that never starts and ignores its late result', async () => {
+    const adapter = new FakePlayerAdapter()
+    const clock = new FakeClock()
+    const recoveries: string[] = []
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      policy: { sourceWarmupTimeoutMs: 1_000 },
+      onRecoveryRequest: (request) => {
+        recoveries.push(request.reason)
+      },
+    })
+    adapter.failNextPlay(namedError('NotAllowedError'))
+    await controller.setSource(SOURCE)
+
+    const resumeStarted = adapter.deferPlaybackStart()
+    const resume = controller.resume()
+    await resumeStarted
+    clock.advanceBy(1_000)
+
+    expect(recoveries).toEqual(['source-timeout'])
+    expect(controller.getSnapshot()).toMatchObject({ state: 'recovering', suspension: null })
+
+    adapter.resolvePlaybackStart()
+    await resume
+
+    expect(controller.getSnapshot()).toMatchObject({ state: 'recovering', suspension: null })
+
+    await controller.destroy()
+  })
+
+  it('clears the source deadline when a gesture resume starts playback', async () => {
+    const adapter = new FakePlayerAdapter()
+    const clock = new FakeClock()
+    const recoveries: string[] = []
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      policy: { sourceWarmupTimeoutMs: 1_000 },
+      onRecoveryRequest: (request) => {
+        recoveries.push(request.reason)
+      },
+    })
+    adapter.failNextPlay(namedError('NotAllowedError'))
+    await controller.setSource(SOURCE)
+
+    await controller.resume()
+    clock.advanceBy(5_000)
+
+    expect(recoveries).toEqual([])
+    expect(controller.getSnapshot()).toMatchObject({ state: 'playing', suspension: null })
+
+    await controller.destroy()
+  })
+
   it('still fails loudly when playback breaks for any other reason', async () => {
     const adapter = new FakePlayerAdapter()
     const controller = createContinuityController({
