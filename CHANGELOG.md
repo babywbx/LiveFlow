@@ -4,6 +4,15 @@
 
 从 `v2.0.0` 起，公共接口与 `CONTRACT_VERSION` 同步遵循语义化主版本规则。
 
+## [2.3.0] - 2026-11-13
+
+### 新增
+
+- 连续性策略的 `catchupRate` 可以设为 `1`，用来关闭柔性追帧。播放始终保持 `1.0x`，不会
+  出现提速带来的听感变化。尾距超过 `hardResyncThresholdSeconds` 时照常发出 `latency`
+  恢复请求。默认值 `1.04` 与既有行为不变，小于 `1` 的取值仍会抛出
+  `InvalidContinuityPolicyError`。
+
 ## [2.2.1] - 2026-11-11
 
 ### 修复
