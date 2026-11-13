@@ -14,6 +14,7 @@ export type {
   DanmakuEngineOptions,
   DanmakuIdentity,
   DanmakuLaneSelection,
+  DanmakuLayout,
   DanmakuLimits,
   DanmakuMeasurement,
   DanmakuMessage,
@@ -29,5 +30,6 @@ export type {
   DanmakuRenderer,
   DanmakuRenderPosition,
   DanmakuSender,
+  DanmakuStackAnchor,
   DanmakuViewport,
 } from './types.js'

@@ -1,5 +1,5 @@
 import type { Destroyable } from '../../shared/disposable.js'
-import type { DanmakuIdentity, DanmakuRenderer } from '../types.js'
+import type { DanmakuIdentity, DanmakuLayout, DanmakuRenderer } from '../types.js'
 
 export interface AssetResolver {
   resolve(assetKey: string): string | null
@@ -11,6 +11,7 @@ export interface IdentityRenderer {
 
 export interface DomDanmakuRendererOptions {
   readonly container: HTMLElement
+  readonly layout?: DanmakuLayout
   readonly maxPoolSize?: number
   readonly maxBadgesPerMessage?: number
   readonly maxTextLength?: number

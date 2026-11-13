@@ -224,8 +224,8 @@ overlay.submit({
 | ---------------------------------- | ---------------------------------------- | -----: | ---: |
 | `@babywbx/liveflow`                | `CONTRACT_VERSION`、共享类型与类型化错误 |      — |    — |
 | `@babywbx/liveflow/continuity`     | 连续性控制器与播放器 adapter 契约        | 5.9 KB | 6 KB |
-| `@babywbx/liveflow/danmaku`        | 有界弹幕调度核心                         | 5.6 KB | 7 KB |
-| `@babywbx/liveflow/danmaku/dom`    | 安全结构化 DOM renderer 与颜色工具       | 3.1 KB | 4 KB |
+| `@babywbx/liveflow/danmaku`        | 有界弹幕调度核心                         | 6.8 KB | 7 KB |
+| `@babywbx/liveflow/danmaku/dom`    | 安全结构化 DOM renderer 与颜色工具       | 3.3 KB | 4 KB |
 | `@babywbx/liveflow/overlay`        | 实时事件引擎与共享预算协调器             | 6.2 KB | 8 KB |
 | `@babywbx/liveflow/overlay/banner` | 事件横幅呈现器（可选，按需加载）         | 4.3 KB | 5 KB |
 | `@babywbx/liveflow/chrome`         | 播放器控件显隐控制器（空闲隐藏与常驻）   | 1.5 KB | 2 KB |
@@ -238,7 +238,7 @@ overlay.submit({
 | `@babywbx/liveflow/xgplayer`       | 零静态播放器依赖的 XGPlayer-like seam    | 3.5 KB | 4 KB |
 
 体积由 `pnpm size:check` 压缩后 gzip 实测，超过预算列即 CI 失败。四个核心子路径合并实测
-18.5 KB，冻结上限 20 KB。
+20.0 KB，冻结上限 20 KB。
 
 <div align="right">
 
@@ -424,6 +424,10 @@ interface DanmakuEngine {
 `onDiagnostic`。`renderer` 是唯一渲染接缝：核心每帧先批量 `measure()`，再用一次 `render()` 交付
 挂载、位移和卸载。调用方不需要为每条消息建立动画循环；引擎空闲时根本不申请动画帧。
 
+可选的 `layout` 决定排布方式。默认 `lanes` 按轨道排布滚动、顶部和底部消息。`stack` 把视口
+当作列表区域，消息逐条堆叠在画面一角，新消息从末尾滑入，旧消息被顶出后卸载，见
+[在画面角落显示列表式弹幕](./docs/how-to/stack-layout.md)。
+
 ```ts
 interface DanmakuMessage {
   id: string
@@ -432,7 +436,7 @@ interface DanmakuMessage {
   mode: 'scroll' | 'top' | 'bottom'
   priority: number
   color?: string
-  sender?: { displayName?: string }
+  sender?: { displayName?: string; color?: string; avatarKey?: string }
   identities?: readonly DanmakuIdentity[]
   metadata?: DanmakuMetadata
 }
@@ -487,6 +491,7 @@ import { createDomDanmakuRenderer } from '@babywbx/liveflow/danmaku/dom'
 
 ```text
 .liveflow-danmaku__message
+  .liveflow-danmaku__avatar
   .liveflow-danmaku__identity[data-kind]
     .liveflow-danmaku__identity-asset
     .liveflow-danmaku__identity-label
@@ -652,18 +657,21 @@ const tracks = multiviewGridTracks(spec) // { gridTemplateColumns, gridTemplateR
 
 **弹幕上限与调度策略** —— `DEFAULT_DANMAKU_LIMITS`、`DEFAULT_DANMAKU_POLICY`：
 
-| 上限                  | 默认值 | 策略                      |        默认值 |
-| --------------------- | -----: | ------------------------- | ------------: |
-| `maxPending`          |  `200` | `laneHeight`              |       `32` px |
-| `maxVisible`          |   `80` | `laneGap`                 |       `12` px |
-| `maxPoolSize`         |   `96` | `scrollPixelsPerSecond`   |    `140` px/s |
-| `maxTextLength`       |  `500` | `fixedDurationMs`         |        `4000` |
-| `maxBadgesPerMessage` |    `4` | `maxPendingAgeMs`         |        `8000` |
-| `maxMountsPerFrame`   |    `8` | `maxLaneWaitMs`           |        `2000` |
-| `maxIntakePerSecond`  |  `120` | `duplicateWindowMs`       |         `500` |
-| `maxDisplayPerSecond` |   `60` | `frameBudgetMs`           |           `8` |
-|                       |        | `scrollOverlapStartRatio` |           `0` |
-|                       |        | `scrollLaneSelection`     | `'first-fit'` |
+| 上限                  | 默认值 | 策略                      |          默认值 |
+| --------------------- | -----: | ------------------------- | --------------: |
+| `maxPending`          |  `200` | `laneHeight`              |         `32` px |
+| `maxVisible`          |   `80` | `laneGap`                 |         `12` px |
+| `maxPoolSize`         |   `96` | `scrollPixelsPerSecond`   |      `140` px/s |
+| `maxTextLength`       |  `500` | `fixedDurationMs`         |          `4000` |
+| `maxBadgesPerMessage` |    `4` | `maxPendingAgeMs`         |          `8000` |
+| `maxMountsPerFrame`   |    `8` | `maxLaneWaitMs`           |          `2000` |
+| `maxIntakePerSecond`  |  `120` | `duplicateWindowMs`       |           `500` |
+| `maxDisplayPerSecond` |   `60` | `frameBudgetMs`           |             `8` |
+|                       |        | `scrollOverlapStartRatio` |             `0` |
+|                       |        | `scrollLaneSelection`     |   `'first-fit'` |
+|                       |        | `stackAnchor`             | `'bottom-left'` |
+|                       |        | `stackGap`                |          `4` px |
+|                       |        | `stackGlideMs`            |           `300` |
 
 `metadata` 的 entries 与数组元素共用 `maxMetadataKeys`（`16`）预算，另外受
 `maxMetadataDepth`（`2`）和 `maxMetadataBytes`（`2048`）约束。
@@ -754,6 +762,7 @@ const tracks = multiviewGridTracks(spec) // { gridTemplateColumns, gridTemplateR
 |                                                               | [配置多播放器共享预算](./docs/how-to/shared-overlay-budget.md)       |
 |                                                               | [运行耐久压力测试](./docs/how-to/run-soak.md)                        |
 |                                                               | [处理被浏览器拒绝的播放](./docs/how-to/handle-suspended-playback.md) |
+|                                                               | [在画面角落显示列表式弹幕](./docs/how-to/stack-layout.md)            |
 
 | 参考                                                | 说明                                                       |
 | --------------------------------------------------- | ---------------------------------------------------------- |

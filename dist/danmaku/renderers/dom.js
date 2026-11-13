@@ -15,6 +15,7 @@ export function createDomDanmakuRenderer(options) {
     if (!Number.isFinite(minimumContrastRatio) || minimumContrastRatio <= 0) {
         throw new InvalidDanmakuConfigurationError('minimumContrastRatio');
     }
+    const stack = options.layout === 'stack';
     const document = options.container.ownerDocument;
     const layer = document.createElement('div');
     const probe = document.createElement('div');
@@ -34,6 +35,8 @@ export function createDomDanmakuRenderer(options) {
     try {
         configureLayer(layer);
         configureProbe(probe);
+        if (stack)
+            wrapWithin(probe, viewport.width);
         layer.append(probe);
         options.container.append(layer);
         if (options.reducedMotion === undefined &&
@@ -96,6 +99,8 @@ export function createDomDanmakuRenderer(options) {
                     throw new InvalidDanmakuMessageError('id');
                 }
                 const record = acquire();
+                if (stack)
+                    wrapWithin(record.root, viewport.width);
                 try {
                     populateNode(record.root, item.message, record.disposables);
                 }
@@ -107,7 +112,7 @@ export function createDomDanmakuRenderer(options) {
                     throw new DanmakuRendererError('render');
                 }
                 record.width = item.width;
-                applyPosition(record.root, item, record.width);
+                place(record.root, item, record.width);
                 active.set(item.message.id, record);
                 fragment.append(record.root);
             }
@@ -116,10 +121,8 @@ export function createDomDanmakuRenderer(options) {
             }
             for (const update of frame.updates) {
                 const record = active.get(update.id);
-                if (record !== undefined) {
-                    const x = reducedMotion ? Math.max(0, (viewport.width - record.width) / 2) : update.x;
-                    record.root.style.transform = `translate3d(${String(x)}px, ${String(update.y)}px, 0)`;
-                }
+                if (record !== undefined)
+                    place(record.root, update, record.width);
             }
         },
         resize(nextViewport) {
@@ -128,6 +131,8 @@ export function createDomDanmakuRenderer(options) {
             viewport = { ...nextViewport };
             layer.style.width = `${String(viewport.width)}px`;
             layer.style.height = `${String(viewport.height)}px`;
+            if (stack)
+                wrapWithin(probe, viewport.width);
         },
         setPaused(nextPaused) {
             ensureActive();
@@ -241,6 +246,7 @@ export function createDomDanmakuRenderer(options) {
         resetElement(root);
         root.className = 'liveflow-danmaku__message';
         root.dataset.mode = message.mode;
+        appendAsset(root, 'liveflow-danmaku__avatar', '', message.sender?.avatarKey, root !== probe);
         const identities = message.identities;
         const identityCount = Math.min(identities?.length ?? 0, maxBadges);
         for (let index = 0; index < identityCount; index += 1) {
@@ -272,6 +278,9 @@ export function createDomDanmakuRenderer(options) {
             const sender = document.createElement('span');
             sender.className = 'liveflow-danmaku__sender';
             sender.textContent = displayName;
+            const senderColor = message.sender?.color;
+            if (senderColor !== undefined)
+                sender.style.color = textColor(senderColor);
             root.append(sender);
             const delimiter = document.createElement('span');
             delimiter.className = 'liveflow-danmaku__delimiter';
@@ -281,22 +290,14 @@ export function createDomDanmakuRenderer(options) {
         const text = document.createElement('span');
         text.className = 'liveflow-danmaku__text';
         text.textContent = truncateGraphemeSafe(message.text, maxTextLength);
-        text.style.color = resolveAccessibleTextColor(message.color, options.backgroundColor, options.fallbackTextColor, minimumContrastRatio);
+        text.style.color = textColor(message.color);
         root.append(text);
     }
+    function textColor(requested) {
+        return resolveAccessibleTextColor(requested, options.backgroundColor, options.fallbackTextColor, minimumContrastRatio);
+    }
     function renderDefaultIdentity(container, identity) {
-        if (identity.assetKey !== undefined && options.assetResolver !== undefined) {
-            const resolved = resolveAsset(identity.assetKey);
-            if (resolved !== null) {
-                const image = document.createElement('img');
-                image.className = 'liveflow-danmaku__identity-asset';
-                image.alt = identity.label;
-                image.src = resolved;
-                image.decoding = 'async';
-                image.draggable = false;
-                container.append(image);
-            }
-        }
+        appendAsset(container, 'liveflow-danmaku__identity-asset', identity.label, identity.assetKey, true);
         const label = document.createElement('span');
         label.className = 'liveflow-danmaku__identity-label';
         label.textContent =
@@ -304,6 +305,19 @@ export function createDomDanmakuRenderer(options) {
                 ? identity.label
                 : `${identity.label} Lv.${String(identity.level)}`;
         container.append(label);
+    }
+    function appendAsset(container, className, alt, assetKey, load) {
+        const resolved = assetKey === undefined ? null : resolveAsset(assetKey);
+        if (resolved === null)
+            return;
+        const image = document.createElement('img');
+        image.className = className;
+        image.alt = alt;
+        if (load)
+            image.src = resolved;
+        image.decoding = 'async';
+        image.draggable = false;
+        container.append(image);
     }
     function resolveAsset(assetKey) {
         let resolved;
@@ -338,9 +352,10 @@ export function createDomDanmakuRenderer(options) {
             return;
         }
     }
-    function applyPosition(root, item, width) {
-        const x = reducedMotion ? Math.max(0, (viewport.width - width) / 2) : item.x;
-        root.style.transform = `translate3d(${String(x)}px, ${String(item.y)}px, 0)`;
+    function place(root, position, width) {
+        const x = reducedMotion && !stack ? Math.max(0, (viewport.width - width) / 2) : position.x;
+        const y = reducedMotion ? (position.restY ?? position.y) : position.y;
+        root.style.transform = `translate3d(${String(x)}px, ${String(y)}px, 0)`;
     }
     function handleReducedMotionChange(event) {
         reducedMotion = event.matches;
@@ -389,6 +404,11 @@ function configureProbe(probe) {
     probe.style.width = 'max-content';
     probe.style.whiteSpace = 'nowrap';
     probe.style.pointerEvents = 'none';
+}
+function wrapWithin(element, width) {
+    element.style.maxWidth = `${String(width)}px`;
+    element.style.whiteSpace = 'normal';
+    element.style.overflowWrap = 'anywhere';
 }
 function createRoot(document) {
     const root = document.createElement('div');

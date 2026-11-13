@@ -4,12 +4,27 @@ import { ContractVersionMismatchError } from '../shared/errors.js';
 import { DanmakuRendererError, InvalidDanmakuConfigurationError, InvalidDanmakuMessageError, NonMonotonicDanmakuClockError, } from './errors.js';
 import { emitSanitizationDiagnostics, resolveLimits, resolvePolicy, sanitizeMessage, validateRequiredMessageFields, validateViewport, } from './validation.js';
 const MAX_DIAGNOSTIC_CODES = 16;
+const DROP_COUNT_KEYS = {
+    duplicate: 'duplicate',
+    expired: 'expired',
+    'input-rate': 'inputRate',
+    'pending-capacity': 'pendingCapacity',
+    'display-rate': 'displayRate',
+    'visible-capacity': 'visibleCapacity',
+    'no-lane': 'noLane',
+    'text-too-long': 'textTooLong',
+    'measurement-failed': 'measurementFailed',
+};
 const DIAGNOSTIC_COOLDOWN_MS = 1_000;
 export function createDanmakuEngine(options) {
     if (options.contractVersion !== CONTRACT_VERSION) {
         throw new ContractVersionMismatchError(CONTRACT_VERSION, options.contractVersion);
     }
     validateViewport(options.viewport);
+    if (options.layout !== undefined && options.layout !== 'lanes' && options.layout !== 'stack') {
+        throw new InvalidDanmakuConfigurationError('layout');
+    }
+    const stack = options.layout === 'stack';
     const limits = resolveLimits(options.limits);
     let policy = resolvePolicy(options.policy);
     const clock = options.clock ?? createSystemClock();
@@ -27,6 +42,9 @@ export function createDanmakuEngine(options) {
     let destroyed = false;
     let rendererDestroyed = false;
     let fatalError = null;
+    let stackEnd = 0;
+    let glideFrom = 0;
+    let glideAt = 0;
     const pending = [];
     const visible = [];
     const intakeTimes = [];
@@ -141,6 +159,7 @@ export function createDanmakuEngine(options) {
             }
             shiftTimes(intakeTimes, pausedDuration);
             shiftTimes(displayTimes, pausedDuration);
+            glideAt += pausedDuration;
             callRenderer('resume', () => {
                 renderer.setPaused(false);
             });
@@ -153,6 +172,7 @@ export function createDanmakuEngine(options) {
             cancelFrame();
             pending.length = 0;
             visible.length = 0;
+            glideFrom = 0;
             if (unmounts.length > 0) {
                 callRenderer('clear', () => {
                     renderer.render({ timestamp: now, mounts: [], updates: [], unmounts });
@@ -170,7 +190,7 @@ export function createDanmakuEngine(options) {
             const previousLaneSpans = new Map();
             for (const item of visible) {
                 previousLaneSpans.set(item, item.laneSpan);
-                if (item.message.mode === 'scroll') {
+                if (!stack && item.message.mode === 'scroll') {
                     scrollPositions.set(item, positionAt(item, now).x);
                     scrollProgress.set(item, progressAt(item, now));
                 }
@@ -182,29 +202,31 @@ export function createDanmakuEngine(options) {
                 item.measurement = null;
                 item.measuredAtFrame = 0;
             }
-            for (const item of visible) {
-                const previousX = scrollPositions.get(item);
-                const previousProgress = scrollProgress.get(item);
-                if (previousX !== undefined && previousProgress !== undefined) {
-                    rebaseScrollPosition(item, previousX, previousProgress, now);
-                }
-                item.laneSpan = Math.max(1, Math.ceil(item.height / policy.laneHeight));
-            }
-            reflowScrollOverlap(now);
             const unmounts = [];
-            const retained = [];
-            for (const item of visible) {
-                if (item.lane + item.laneSpan > laneCount ||
-                    retained.some((existing) => visibleItemsConflict(item, existing, now, previousLaneSpans))) {
-                    unmounts.push(item.message.id);
-                    recordDrop('no-lane');
+            if (!stack) {
+                for (const item of visible) {
+                    const previousX = scrollPositions.get(item);
+                    const previousProgress = scrollProgress.get(item);
+                    if (previousX !== undefined && previousProgress !== undefined) {
+                        rebaseScrollPosition(item, previousX, previousProgress, now);
+                    }
+                    item.laneSpan = Math.max(1, Math.ceil(item.height / policy.laneHeight));
                 }
-                else {
-                    retained.push(item);
+                reflowScrollOverlap(now);
+                const retained = [];
+                for (const item of visible) {
+                    if (item.lane + item.laneSpan > laneCount ||
+                        retained.some((existing) => visibleItemsConflict(item, existing, now, previousLaneSpans))) {
+                        unmounts.push(item.message.id);
+                        recordDrop('no-lane');
+                    }
+                    else {
+                        retained.push(item);
+                    }
                 }
+                visible.length = 0;
+                visible.push(...retained);
             }
-            visible.length = 0;
-            visible.push(...retained);
             callRenderer('resize', () => {
                 renderer.resize(viewport);
             });
@@ -320,7 +342,7 @@ export function createDanmakuEngine(options) {
             pausedAt !== null ||
             fatalError !== null ||
             frameHandle !== null ||
-            (pending.length === 0 && visible.length === 0)) {
+            (pending.length === 0 && (stack ? stackOffset(lastNow) === 0 : visible.length === 0))) {
             return;
         }
         frameHandle = clock.requestFrame(runFrame);
@@ -348,10 +370,30 @@ export function createDanmakuEngine(options) {
             return;
         }
         const frameStartedAt = now;
+        const rest = stackRest();
         const unmounts = expireVisible(now);
         expirePending(now);
         pruneRateWindow(displayTimes, now);
-        const mounts = mountPending(now);
+        const mounted = mountPending(now);
+        if (stack) {
+            while (visible.length > limits.maxVisible) {
+                const oldest = visible.shift();
+                if (oldest !== undefined)
+                    unmounts.push(oldest.message.id);
+            }
+            const shift = stackRest() - rest;
+            if (shift !== 0) {
+                glideFrom = stackOffset(now) + shift;
+                glideAt = now;
+            }
+        }
+        const mounts = mounted.map((item) => ({
+            message: item.message,
+            lane: item.lane,
+            ...positionAt(item, now),
+            width: item.width,
+            height: item.height,
+        }));
         const updates = collectPositions(now);
         if (mounts.length > 0 || updates.length > 0 || unmounts.length > 0) {
             callRendererFromFrame('render', () => {
@@ -381,6 +423,14 @@ export function createDanmakuEngine(options) {
     }
     function expireVisible(now) {
         const unmounts = [];
+        if (stack) {
+            const edge = stackRest() - stackOffset(now) - (policy.stackGap ?? 0);
+            for (let first = visible[0]; first !== undefined && first.top + first.height <= edge; first = visible[0]) {
+                visible.shift();
+                unmounts.push(first.message.id);
+            }
+            return unmounts;
+        }
         for (let index = visible.length - 1; index >= 0; index -= 1) {
             const item = visible[index];
             if (item !== undefined && item.endAt <= now) {
@@ -407,11 +457,11 @@ export function createDanmakuEngine(options) {
             dropTimedOutLaneWaiters(now, 'display-rate');
             return [];
         }
-        if (visible.length >= limits.maxVisible) {
+        if (!stack && visible.length >= limits.maxVisible) {
             dropTimedOutLaneWaiters(now, 'visible-capacity');
             return [];
         }
-        const mountCapacity = Math.min(limits.maxMountsPerFrame, limits.maxVisible - visible.length, limits.maxDisplayPerSecond - displayTimes.length);
+        const mountCapacity = Math.min(limits.maxMountsPerFrame, stack ? limits.maxVisible : limits.maxVisible - visible.length, limits.maxDisplayPerSecond - displayTimes.length);
         measurementFrame += 1;
         const unmeasured = [];
         for (const item of pending) {
@@ -464,9 +514,9 @@ export function createDanmakuEngine(options) {
             if (measurement !== undefined)
                 candidate.measurement = measurement;
         }
-        const mounts = [];
+        const mounted = [];
         let pendingIndex = 0;
-        while (pendingIndex < pending.length && mounts.length < mountCapacity) {
+        while (pendingIndex < pending.length && mounted.length < mountCapacity) {
             const candidate = pending[pendingIndex];
             if (candidate === undefined)
                 break;
@@ -476,11 +526,14 @@ export function createDanmakuEngine(options) {
                 continue;
             }
             const laneSpan = Math.max(1, Math.ceil(measurement.height / policy.laneHeight));
-            const duration = candidate.message.mode === 'scroll'
-                ? scrollDuration(measurement.width, candidate.sampleRank)
-                : policy.fixedDurationMs;
-            const scrollSpeed = candidate.message.mode === 'scroll' ? (viewport.width + measurement.width) / duration : 0;
-            const lane = findLane(candidate.message.mode, laneSpan, scrollSpeed, now);
+            const scrolls = !stack && candidate.message.mode === 'scroll';
+            const duration = stack
+                ? Number.POSITIVE_INFINITY
+                : scrolls
+                    ? scrollDuration(measurement.width, candidate.sampleRank)
+                    : policy.fixedDurationMs;
+            const scrollSpeed = scrolls ? (viewport.width + measurement.width) / duration : 0;
+            const lane = stack ? 0 : findLane(candidate.message.mode, laneSpan, scrollSpeed, now);
             if (lane === null) {
                 if (now - candidate.enqueuedAt >= policy.maxLaneWaitMs) {
                     pending.splice(pendingIndex, 1);
@@ -492,6 +545,9 @@ export function createDanmakuEngine(options) {
                 continue;
             }
             pending.splice(pendingIndex, 1);
+            const top = stack ? stackEnd + (visible.length > 0 ? (policy.stackGap ?? 0) : 0) : 0;
+            if (stack)
+                stackEnd = top + measurement.height;
             const item = {
                 message: candidate.message,
                 sampleRank: candidate.sampleRank,
@@ -499,24 +555,28 @@ export function createDanmakuEngine(options) {
                 laneSpan,
                 width: measurement.width,
                 height: measurement.height,
+                top,
                 scrollPixelsPerMs: scrollSpeed,
                 startAt: now,
                 endAt: now + duration,
             };
             visible.push(item);
+            mounted.push(item);
             displayTimes.push(now);
             metrics.displayed += 1;
-            const position = positionAt(item, now);
-            mounts.push({
-                message: item.message,
-                lane,
-                x: position.x,
-                y: position.y,
-                width: item.width,
-                height: item.height,
-            });
         }
-        return mounts;
+        return mounted;
+    }
+    function stackRest() {
+        const bottom = stackEnd - viewport.height;
+        return policy.stackAnchor?.startsWith('top') === true
+            ? Math.max(visible[0]?.top ?? stackEnd, bottom)
+            : bottom;
+    }
+    function stackOffset(now) {
+        const duration = policy.stackGlideMs ?? 0;
+        const elapsed = now - glideAt;
+        return elapsed < duration ? glideFrom * (1 - elapsed / duration) ** 3 : 0;
     }
     function dropTimedOutLaneWaiters(now, reason) {
         for (let index = pending.length - 1; index >= 0; index -= 1) {
@@ -593,16 +653,17 @@ export function createDanmakuEngine(options) {
             existingX < candidateX + candidate.width + policy.laneGap);
     }
     function collectPositions(now) {
-        return visible.map((item) => {
-            const position = positionAt(item, now);
-            return {
-                id: item.message.id,
-                x: position.x,
-                y: position.y,
-            };
-        });
+        return visible.map((item) => ({ id: item.message.id, ...positionAt(item, now) }));
     }
     function positionAt(item, now) {
+        if (stack) {
+            const restY = item.top - stackRest();
+            return {
+                x: policy.stackAnchor?.endsWith('right') === true ? viewport.width - item.width : 0,
+                y: restY + stackOffset(now),
+                restY,
+            };
+        }
         const y = item.lane * policy.laneHeight;
         if (item.message.mode !== 'scroll') {
             return {
@@ -726,35 +787,7 @@ export function createDanmakuEngine(options) {
     }
     function recordDrop(reason) {
         metrics.dropped += 1;
-        switch (reason) {
-            case 'duplicate':
-                metrics.droppedByReason.duplicate += 1;
-                return;
-            case 'expired':
-                metrics.droppedByReason.expired += 1;
-                return;
-            case 'input-rate':
-                metrics.droppedByReason.inputRate += 1;
-                return;
-            case 'pending-capacity':
-                metrics.droppedByReason.pendingCapacity += 1;
-                return;
-            case 'display-rate':
-                metrics.droppedByReason.displayRate += 1;
-                return;
-            case 'visible-capacity':
-                metrics.droppedByReason.visibleCapacity += 1;
-                return;
-            case 'no-lane':
-                metrics.droppedByReason.noLane += 1;
-                return;
-            case 'text-too-long':
-                metrics.droppedByReason.textTooLong += 1;
-                return;
-            case 'measurement-failed':
-                metrics.droppedByReason.measurementFailed += 1;
-                return;
-        }
+        metrics.droppedByReason[DROP_COUNT_KEYS[reason]] += 1;
     }
     function snapshotMetrics() {
         return {

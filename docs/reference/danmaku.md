@@ -29,6 +29,12 @@ const engine = createDanmakuEngine({
 
 传入 `clock` 可以替换单调时钟，主要用于确定性测试。自定义时钟的 `now()` 不得倒退。
 
+`layout` 选择排布方式，创建后不可更改：
+
+- `lanes`（默认）：按轨道排布滚动、顶部和底部消息。
+- `stack`：把视口当作一个列表区域，消息逐条堆叠，新消息从末尾进入，旧消息被顶出区域后
+  卸载。详见[列表排布](#列表排布)。
+
 ## `DanmakuEngine`
 
 ```ts
@@ -55,7 +61,8 @@ interface DanmakuEngine {
   传入第二个参数可同时改写策略，常见于字号变化导致轨道高度必须跟着变：省去销毁重建引擎，
   在途消息除放不下的以外都会保留。省略该参数时沿用当前策略；非法数值照常抛
   `InvalidDanmakuConfigurationError`。固定通过时长模式会把在途滚动消息按行程进度映射到新
-  宽度；固定像素速度模式则保留当前绝对横坐标。
+  宽度；固定像素速度模式则保留当前绝对横坐标。`stack` 排布下，已挂载的行保留挂载时的尺寸与
+  间距，只跟随新的视口移动。
 - `destroy()` 取消帧任务并清空全部有界集合。重复销毁安全。销毁后的其他调用会抛错。
 
 引擎在空闲且没有等待消息时不申请动画帧。
@@ -72,6 +79,8 @@ interface DanmakuMessage {
   color?: string
   sender?: {
     displayName?: string
+    color?: string
+    avatarKey?: string
   }
   identities?: readonly DanmakuIdentity[]
   metadata?: DanmakuMetadata
@@ -106,7 +115,12 @@ interface DanmakuIdentity {
 节点；引擎不会从某种身份推断另一种身份，也不会让身份等级改变整条正文的颜色。
 
 正文颜色只接受 `#rgb` 或 `#rrggbb`。其他颜色被省略并产生限频诊断。DOM 渲染器还会独立
-执行对比度检查。
+执行对比度检查。`sender.color` 是昵称颜色，格式和清洗规则与正文颜色相同。
+
+`sender.avatarKey` 是调用方定义的头像资源键。引擎不解析也不加载它，由渲染器经
+`assetResolver` 换成图片地址。
+
+`mode` 在 `stack` 排布下不参与排布，但仍是必填字段。
 
 ## 输入清洗
 
@@ -152,20 +166,23 @@ interface DanmakuIdentity {
 
 ## 默认调度策略
 
-| 字段                      |    默认值 | 含义                                       |
-| ------------------------- | --------: | ------------------------------------------ |
-| `laneHeight`              |     32 px | 轨道基准高度                               |
-| `laneGap`                 |     12 px | 同轨滚动消息的最小安全距离                 |
-| `scrollPixelsPerSecond`   |  140 px/s | 未设置滚动时长时的滚动速度                 |
-| `scrollDurationMs`        |    未设置 | 可选的整条滚动消息通过时长                 |
-| `scrollDurationJitterMs`  |    未设置 | 可选的逐条稳定时长扰动上限                 |
-| `scrollOverlapStartRatio` |         0 | 更快后条允许追近前条前的视口行程比例       |
-| `scrollLaneSelection`     | first-fit | 滚动消息的选轨方式                         |
-| `fixedDurationMs`         |   4000 ms | 顶部和底部消息的展示时长                   |
-| `maxPendingAgeMs`         |   8000 ms | 最长等待时间                               |
-| `maxLaneWaitMs`           |   2000 ms | 因无轨道、显示限速或可见上限等待的最长时间 |
-| `duplicateWindowMs`       |    500 ms | 普通短消息去重窗口                         |
-| `frameBudgetMs`           |      8 ms | 单帧预算诊断阈值                           |
+| 字段                      |      默认值 | 含义                                       |
+| ------------------------- | ----------: | ------------------------------------------ |
+| `laneHeight`              |       32 px | 轨道基准高度                               |
+| `laneGap`                 |       12 px | 同轨滚动消息的最小安全距离                 |
+| `scrollPixelsPerSecond`   |    140 px/s | 未设置滚动时长时的滚动速度                 |
+| `scrollDurationMs`        |      未设置 | 可选的整条滚动消息通过时长                 |
+| `scrollDurationJitterMs`  |      未设置 | 可选的逐条稳定时长扰动上限                 |
+| `scrollOverlapStartRatio` |           0 | 更快后条允许追近前条前的视口行程比例       |
+| `scrollLaneSelection`     |   first-fit | 滚动消息的选轨方式                         |
+| `fixedDurationMs`         |     4000 ms | 顶部和底部消息的展示时长                   |
+| `stackAnchor`             | bottom-left | 列表排布贴靠的角                           |
+| `stackGap`                |        4 px | 列表排布的行间距                           |
+| `stackGlideMs`            |      300 ms | 列表排布的滑动时长，`0` 表示不滑动         |
+| `maxPendingAgeMs`         |     8000 ms | 最长等待时间                               |
+| `maxLaneWaitMs`           |     2000 ms | 因无轨道、显示限速或可见上限等待的最长时间 |
+| `duplicateWindowMs`       |      500 ms | 普通短消息去重窗口                         |
+| `frameBudgetMs`           |        8 ms | 单帧预算诊断阈值                           |
 
 滚动距离 `distance = viewportWidth + messageWidth`。未设置 `scrollDurationMs` 时，基础时长为
 `distance / scrollPixelsPerSecond × 1000` 毫秒；设置后则直接使用该值，且不得小于 `1 ms`。
@@ -210,6 +227,31 @@ requiredGap = laneGap
 
 等待队列满时，引擎先比较优先级，再使用由消息 ID 计算的稳定采样顺序。高优先级消息可以
 替换较低优先级消息；相同输入集合产生相同的普通消息保留结果。队列绝不会因突发输入扩容。
+
+## 列表排布
+
+`layout: 'stack'` 把整个视口当作列表区域。调用方负责把渲染容器放到画面的某个角并给它合适的
+宽高，引擎只在这个区域内排布。
+
+- 每条消息占一行，行宽不超过视口宽度，行高取 `measure()` 返回的实测高度，折行的长消息占
+  更高的一行。
+- 新行接在最后一行之后，行间距为 `stackGap`。列表超出区域后整体上移，最早的行从上边缘
+  离开。
+- 一行连同它下方的行间距完全离开上边缘后才卸载。可见行数超过 `maxVisible` 时，最早的行
+  直接卸载，为新行让位，列表不会因为区域过高而停住。
+- 行没有展示时长，只会被后来的行顶出。消息稀少时，已有的行一直留在原位。
+- `stackAnchor` 的上下部分决定空位留在哪一侧：`bottom-*` 让行贴住下边缘，新行从下边缘
+  滑入。`top-*` 让行从上边缘开始向下填充，填满后再上移。左右部分决定行贴住左边缘还是
+  右边缘。
+- 位移使用三次缓出曲线，在 `stackGlideMs` 内完成。滑动期间有新行进入时，从当前位置重新
+  开始。设为 `0` 时每一行直接出现在最终位置。
+
+`stack` 排布下，渲染帧里的每个位置都带有 `restY`，即滑动结束后的纵坐标。渲染器需要减少
+动态效果时可以直接使用它。`mode`、`laneHeight`、`fixedDurationMs` 和各项滚动策略不参与
+列表排布，等待队列、去重、限速与过期规则不变。`resize()` 之后，新的 `stackGap` 只作用于
+之后进入的行。
+
+列表静止且没有等待消息时，引擎不申请动画帧。
 
 ## 指标
 

@@ -20,6 +20,8 @@ const renderer = createDomDanmakuRenderer({
 })
 ```
 
+`layout` 必须与引擎的 `layout` 一致，默认 `lanes`。
+
 渲染器把自己的绝对定位图层挂到 `container`。调用方应确保容器已建立定位上下文，例如设置
 `position: relative`。图层使用 `pointer-events: none`、`overflow: hidden` 和
 `aria-hidden="true"`，不会拦截播放器操作，也不会让屏幕阅读器持续朗读动画消息。
@@ -30,6 +32,7 @@ const renderer = createDomDanmakuRenderer({
 
 ```text
 .liveflow-danmaku__message
+  .liveflow-danmaku__avatar
   .liveflow-danmaku__identity[data-kind]
     .liveflow-danmaku__identity-asset
     .liveflow-danmaku__identity-label
@@ -41,6 +44,20 @@ const renderer = createDomDanmakuRenderer({
 身份、昵称、分隔符和正文不会拼成 HTML。所有上游文本只赋给 `textContent`。默认身份节点
 把 `label` 和可选的 `Lv.n` 渲染为胶囊内容，使灯牌、用户等级与正文保持不同视觉语义。
 样式类只提供结构接缝；产品侧负责最终的字体、背景、边框和间距。
+
+发送者带有 `avatarKey` 且资源解析成功时，头像图片排在最前，`alt` 为空。`sender.color` 经过
+与正文相同的对比度检查后写到昵称节点上，没有提供时昵称颜色由样式决定。
+
+## 列表排布
+
+传入 `layout: 'stack'` 后，测量 probe 和每一行都以视口宽度为 `max-width`，并允许折行
+（`white-space: normal`、`overflow-wrap: anywhere`），所以 `measure()` 返回的是折行后的实际
+尺寸。一行挂载后保留当时的宽度上限，视口变化只影响之后的行。
+
+头像和身份图片在加载完成前没有固有尺寸。样式必须给它们固定宽高，否则图片加载后行高变化，
+会与相邻的行重叠。测量阶段不加载头像图片。
+
+接入步骤见[在画面角落显示列表式弹幕](../how-to/stack-layout.md)。
 
 ## 节点池与批量写入
 
@@ -89,5 +106,7 @@ const renderer = createDomDanmakuRenderer({
 未显式设置 `reducedMotion` 时，渲染器监听
 `(prefers-reduced-motion: reduce)`。开启后，消息固定在轨道中央，不再按核心提供的横向坐标
 滚动；身份文字和轨道位置仍然可见。显式传入布尔值可以避免建立媒体查询监听器。
+
+`stack` 排布下不做居中，改用核心提供的 `restY`，每一行直接出现在最终位置，不再滑动。
 
 `destroy()` 会移除监听器、活动节点、池节点、测量 probe 和根图层。重复调用安全。

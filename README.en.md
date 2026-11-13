@@ -229,8 +229,8 @@ and never statically pulls in an engine or a player runtime.
 | ---------------------------------- | ---------------------------------------------------- | -----: | -----: |
 | `@babywbx/liveflow`                | `CONTRACT_VERSION`, shared types, typed errors       |      — |      — |
 | `@babywbx/liveflow/continuity`     | Continuity controller and player adapter contract    | 5.9 KB |   6 KB |
-| `@babywbx/liveflow/danmaku`        | Bounded danmaku scheduler                            | 5.6 KB |   7 KB |
-| `@babywbx/liveflow/danmaku/dom`    | Safe structured DOM renderer and color helpers       | 3.1 KB |   4 KB |
+| `@babywbx/liveflow/danmaku`        | Bounded danmaku scheduler                            | 6.8 KB |   7 KB |
+| `@babywbx/liveflow/danmaku/dom`    | Safe structured DOM renderer and color helpers       | 3.3 KB |   4 KB |
 | `@babywbx/liveflow/overlay`        | Realtime event engine and shared budget coordinator  | 6.2 KB |   8 KB |
 | `@babywbx/liveflow/overlay/banner` | Event banner presenter (optional)                    | 4.3 KB |   5 KB |
 | `@babywbx/liveflow/chrome`         | Player chrome visibility controller                  | 1.5 KB |   2 KB |
@@ -243,7 +243,7 @@ and never statically pulls in an engine or a player runtime.
 | `@babywbx/liveflow/xgplayer`       | XGPlayer-like seam with no static player dependency  | 3.5 KB |   4 KB |
 
 Measured minified and gzipped by `pnpm size:check`, which fails CI on any regression past the
-budget column. The four core subpaths combined measure 18.5 KB against a 20 KB ceiling.
+budget column. The four core subpaths combined measure 20.0 KB against a 20 KB ceiling.
 
 <div align="right">
 
@@ -442,6 +442,11 @@ The engine takes `{ contractVersion, renderer, viewport }` plus optional `clock`
 `measure()` call and delivers mounts, position updates, and unmounts in a single `render()`. Callers
 never build a per-message animation loop, and the engine requests no frame at all while idle.
 
+The optional `layout` picks the arrangement. The default `lanes` schedules scrolling, top, and
+bottom messages onto lanes. `stack` treats the viewport as a list region: messages pile up row by
+row in a corner of the picture, new rows glide in at the end, and rows pushed out of the region are
+unmounted. See [Show a stacked list in a corner](./docs/how-to/stack-layout.md).
+
 ```ts
 interface DanmakuMessage {
   id: string
@@ -450,7 +455,7 @@ interface DanmakuMessage {
   mode: 'scroll' | 'top' | 'bottom'
   priority: number
   color?: string
-  sender?: { displayName?: string }
+  sender?: { displayName?: string; color?: string; avatarKey?: string }
   identities?: readonly DanmakuIdentity[]
   metadata?: DanmakuMetadata
 }
@@ -509,6 +514,7 @@ screen reader narrate animated messages. Each message becomes separate, safe tex
 
 ```text
 .liveflow-danmaku__message
+  .liveflow-danmaku__avatar
   .liveflow-danmaku__identity[data-kind]
     .liveflow-danmaku__identity-asset
     .liveflow-danmaku__identity-label
@@ -680,18 +686,21 @@ mutually contradictory values throw a typed configuration error instead of being
 
 **Danmaku limits and policy** — `DEFAULT_DANMAKU_LIMITS`, `DEFAULT_DANMAKU_POLICY`:
 
-| Limit                 | Default | Policy                    |       Default |
-| --------------------- | ------: | ------------------------- | ------------: |
-| `maxPending`          |   `200` | `laneHeight`              |       `32` px |
-| `maxVisible`          |    `80` | `laneGap`                 |       `12` px |
-| `maxPoolSize`         |    `96` | `scrollPixelsPerSecond`   |    `140` px/s |
-| `maxTextLength`       |   `500` | `fixedDurationMs`         |        `4000` |
-| `maxBadgesPerMessage` |     `4` | `maxPendingAgeMs`         |        `8000` |
-| `maxMountsPerFrame`   |     `8` | `maxLaneWaitMs`           |        `2000` |
-| `maxIntakePerSecond`  |   `120` | `duplicateWindowMs`       |         `500` |
-| `maxDisplayPerSecond` |    `60` | `frameBudgetMs`           |           `8` |
-|                       |         | `scrollOverlapStartRatio` |           `0` |
-|                       |         | `scrollLaneSelection`     | `'first-fit'` |
+| Limit                 | Default | Policy                    |         Default |
+| --------------------- | ------: | ------------------------- | --------------: |
+| `maxPending`          |   `200` | `laneHeight`              |         `32` px |
+| `maxVisible`          |    `80` | `laneGap`                 |         `12` px |
+| `maxPoolSize`         |    `96` | `scrollPixelsPerSecond`   |      `140` px/s |
+| `maxTextLength`       |   `500` | `fixedDurationMs`         |          `4000` |
+| `maxBadgesPerMessage` |     `4` | `maxPendingAgeMs`         |          `8000` |
+| `maxMountsPerFrame`   |     `8` | `maxLaneWaitMs`           |          `2000` |
+| `maxIntakePerSecond`  |   `120` | `duplicateWindowMs`       |           `500` |
+| `maxDisplayPerSecond` |    `60` | `frameBudgetMs`           |             `8` |
+|                       |         | `scrollOverlapStartRatio` |             `0` |
+|                       |         | `scrollLaneSelection`     |   `'first-fit'` |
+|                       |         | `stackAnchor`             | `'bottom-left'` |
+|                       |         | `stackGap`                |          `4` px |
+|                       |         | `stackGlideMs`            |           `300` |
 
 Metadata entries and array items share the `maxMetadataKeys` (`16`) budget and are additionally
 bounded by `maxMetadataDepth` (`2`) and `maxMetadataBytes` (`2048`).
@@ -779,16 +788,17 @@ Public documentation lives in [`docs/`](./docs/reference/shared.md), split into 
 guides, reference, and explanation.
 It is written in Chinese; API names and code samples are language-independent.
 
-| Tutorials                                                            | How-to                                                          |
-| -------------------------------------------------------------------- | --------------------------------------------------------------- |
-| [Native video in ten minutes](./docs/tutorials/native-video.md)      | [Install from Git](./docs/how-to/install-from-git.md)           |
-| [Show structured danmaku](./docs/tutorials/structured-danmaku.md)    | [Configure recovery](./docs/how-to/configure-recovery.md)       |
-| [Register an overlay renderer](./docs/tutorials/overlay-renderer.md) | [Configure overload](./docs/how-to/configure-overload.md)       |
-|                                                                      | [Custom identity rendering](./docs/how-to/custom-identity.md)   |
-|                                                                      | [Custom player adapter](./docs/how-to/custom-player-adapter.md) |
-|                                                                      | [Forward diagnostics](./docs/how-to/forward-diagnostics.md)     |
-|                                                                      | [Shared overlay budget](./docs/how-to/shared-overlay-budget.md) |
-|                                                                      | [Run the soak test](./docs/how-to/run-soak.md)                  |
+| Tutorials                                                            | How-to                                                           |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| [Native video in ten minutes](./docs/tutorials/native-video.md)      | [Install from Git](./docs/how-to/install-from-git.md)            |
+| [Show structured danmaku](./docs/tutorials/structured-danmaku.md)    | [Configure recovery](./docs/how-to/configure-recovery.md)        |
+| [Register an overlay renderer](./docs/tutorials/overlay-renderer.md) | [Configure overload](./docs/how-to/configure-overload.md)        |
+|                                                                      | [Custom identity rendering](./docs/how-to/custom-identity.md)    |
+|                                                                      | [Custom player adapter](./docs/how-to/custom-player-adapter.md)  |
+|                                                                      | [Forward diagnostics](./docs/how-to/forward-diagnostics.md)      |
+|                                                                      | [Shared overlay budget](./docs/how-to/shared-overlay-budget.md)  |
+|                                                                      | [Run the soak test](./docs/how-to/run-soak.md)                   |
+|                                                                      | [Show a stacked list in a corner](./docs/how-to/stack-layout.md) |
 
 | Reference                                                  | Explanation                                                          |
 | ---------------------------------------------------------- | -------------------------------------------------------------------- |

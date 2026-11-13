@@ -1,4 +1,5 @@
 import { InvalidDanmakuConfigurationError, InvalidDanmakuMessageError } from './errors.js';
+import { normalizeHexColor } from './hex-color.js';
 export const DEFAULT_DANMAKU_LIMITS = {
     maxPending: 200,
     maxVisible: 80,
@@ -19,6 +20,9 @@ export const DEFAULT_DANMAKU_POLICY = {
     scrollOverlapStartRatio: 0,
     scrollLaneSelection: 'first-fit',
     fixedDurationMs: 4_000,
+    stackAnchor: 'bottom-left',
+    stackGap: 4,
+    stackGlideMs: 300,
     maxPendingAgeMs: 8_000,
     maxLaneWaitMs: 2_000,
     duplicateWindowMs: 500,
@@ -46,7 +50,12 @@ export function resolvePolicy(input) {
         ...DEFAULT_DANMAKU_POLICY,
         ...input,
     };
-    const { scrollDurationMs, scrollDurationJitterMs, scrollOverlapStartRatio, scrollLaneSelection, ...positivePolicy } = policy;
+    const { scrollDurationMs, scrollDurationJitterMs, scrollOverlapStartRatio, scrollLaneSelection, stackAnchor, stackGap, stackGlideMs, ...positivePolicy } = policy;
+    if (stackAnchor !== undefined && !/^(bottom|top)-(left|right)$/.test(stackAnchor)) {
+        throw new InvalidDanmakuConfigurationError('policy.stackAnchor');
+    }
+    validateNonNegative(stackGap, 'policy.stackGap');
+    validateNonNegative(stackGlideMs, 'policy.stackGlideMs');
     if (scrollLaneSelection !== undefined &&
         scrollLaneSelection !== 'first-fit' &&
         scrollLaneSelection !== 'freest') {
@@ -57,11 +66,7 @@ export function resolvePolicy(input) {
         (!Number.isFinite(scrollDurationMs) || scrollDurationMs < 1)) {
         throw new InvalidDanmakuConfigurationError('policy.scrollDurationMs');
     }
-    if (scrollDurationJitterMs !== undefined &&
-        scrollDurationJitterMs !== null &&
-        (!Number.isFinite(scrollDurationJitterMs) || scrollDurationJitterMs < 0)) {
-        throw new InvalidDanmakuConfigurationError('policy.scrollDurationJitterMs');
-    }
+    validateNonNegative(scrollDurationJitterMs, 'policy.scrollDurationJitterMs');
     if (!Number.isFinite(scrollOverlapStartRatio) ||
         scrollOverlapStartRatio < 0 ||
         scrollOverlapStartRatio > 1) {
@@ -81,6 +86,11 @@ export function resolvePolicy(input) {
     }
     return policy;
 }
+function validateNonNegative(value, field) {
+    if (value !== undefined && value !== null && (!Number.isFinite(value) || value < 0)) {
+        throw new InvalidDanmakuConfigurationError(field);
+    }
+}
 export function validateViewport(viewport) {
     if (!Number.isFinite(viewport.width) || viewport.width <= 0) {
         throw new InvalidDanmakuConfigurationError('viewport.width');
@@ -94,11 +104,11 @@ export function sanitizeMessage(input, required, limits) {
     const metadataResult = sanitizeMessageMetadata(input, limits);
     const colorInput = readMessageField(input, 'color');
     const color = sanitizeColor(colorInput);
-    const sender = sanitizeSender(readMessageField(input, 'sender'));
+    const senderResult = sanitizeSender(readMessageField(input, 'sender'));
     const message = {
         ...required,
         ...(color === undefined ? {} : { color }),
-        ...(sender === undefined ? {} : { sender }),
+        ...(senderResult.sender === undefined ? {} : { sender: senderResult.sender }),
         ...(identitiesResult.identities === undefined
             ? {}
             : { identities: identitiesResult.identities }),
@@ -108,7 +118,7 @@ export function sanitizeMessage(input, required, limits) {
         message,
         metadataDiscarded: metadataResult.discarded,
         identitiesTruncated: identitiesResult.truncated,
-        colorDiscarded: colorInput !== undefined && color === undefined,
+        colorDiscarded: (colorInput !== undefined && color === undefined) || senderResult.colorDiscarded,
     };
 }
 export function emitSanitizationDiagnostics(sanitized, emit) {
@@ -173,20 +183,28 @@ export function validateRequiredMessageFields(input) {
 }
 function sanitizeSender(input) {
     if (input === undefined) {
-        return undefined;
+        return { colorDiscarded: false };
     }
     if (!isPlainRecord(input)) {
         throw new InvalidDanmakuMessageError('sender');
     }
     const displayName = input.displayName;
-    if (displayName === undefined) {
-        return {};
+    const avatarKey = input.avatarKey;
+    if (displayName !== undefined) {
+        validateUnknownBoundedString(displayName, 'sender.displayName', MAX_NAME_LENGTH, true);
     }
-    validateUnknownBoundedString(displayName, 'sender.displayName', MAX_NAME_LENGTH, true);
-    if (typeof displayName !== 'string') {
-        throw new InvalidDanmakuMessageError('sender.displayName');
+    if (avatarKey !== undefined) {
+        validateUnknownBoundedString(avatarKey, 'sender.avatarKey', MAX_ASSET_KEY_LENGTH, false);
     }
-    return { displayName };
+    const color = sanitizeColor(input.color, 'sender.color');
+    return {
+        sender: {
+            ...(typeof displayName === 'string' ? { displayName } : {}),
+            ...(color === undefined ? {} : { color }),
+            ...(typeof avatarKey === 'string' ? { avatarKey } : {}),
+        },
+        colorDiscarded: input.color !== undefined && color === undefined,
+    };
 }
 function sanitizeIdentities(input, limit) {
     if (input === undefined) {
@@ -360,25 +378,14 @@ function isPlainRecord(value) {
     const prototype = Reflect.getPrototypeOf(value);
     return prototype === Object.prototype || prototype === null;
 }
-function sanitizeColor(color) {
+function sanitizeColor(color, field = 'color') {
     if (color === undefined) {
         return undefined;
     }
     if (typeof color !== 'string') {
-        throw new InvalidDanmakuMessageError('color');
+        throw new InvalidDanmakuMessageError(field);
     }
-    const shortMatch = /^#([\da-f]{3})$/i.exec(color);
-    if (shortMatch !== null) {
-        const digits = shortMatch[1];
-        if (digits === undefined) {
-            return undefined;
-        }
-        return `#${digits[0]}${digits[0]}${digits[1]}${digits[1]}${digits[2]}${digits[2]}`.toLowerCase();
-    }
-    if (/^#[\da-f]{6}$/i.test(color)) {
-        return color.toLowerCase();
-    }
-    return undefined;
+    return normalizeHexColor(color) ?? undefined;
 }
 function readMessageField(input, field) {
     return Reflect.get(input, field);

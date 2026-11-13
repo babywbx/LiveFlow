@@ -1,6 +1,8 @@
 import type { Clock } from '../shared/clock.js';
 import type { EngineHooks } from '../shared/diagnostics.js';
 export type DanmakuMode = 'scroll' | 'top' | 'bottom';
+export type DanmakuLayout = 'lanes' | 'stack';
+export type DanmakuStackAnchor = 'bottom-left' | 'bottom-right' | 'top-left' | 'top-right';
 export interface DanmakuIdentity {
     kind: string;
     label: string;
@@ -10,6 +12,8 @@ export interface DanmakuIdentity {
 }
 export interface DanmakuSender {
     displayName?: string;
+    color?: string;
+    avatarKey?: string;
 }
 export type DanmakuMetadataValue = string | number | boolean | null | readonly DanmakuMetadataValue[] | DanmakuMetadata;
 export type DanmakuMetadataEntry = readonly [key: string, value: DanmakuMetadataValue];
@@ -78,11 +82,13 @@ export interface DanmakuRenderItem {
     readonly y: number;
     readonly width: number;
     readonly height: number;
+    readonly restY?: number;
 }
 export interface DanmakuRenderPosition {
     readonly id: string;
     readonly x: number;
     readonly y: number;
+    readonly restY?: number;
 }
 export interface DanmakuRenderFrame {
     readonly timestamp: number;
@@ -112,6 +118,9 @@ export interface DanmakuPolicy {
     readonly scrollOverlapStartRatio: number;
     readonly scrollLaneSelection?: DanmakuLaneSelection;
     readonly fixedDurationMs: number;
+    readonly stackAnchor?: DanmakuStackAnchor;
+    readonly stackGap?: number;
+    readonly stackGlideMs?: number;
     readonly maxPendingAgeMs: number;
     readonly maxLaneWaitMs: number;
     readonly duplicateWindowMs: number;
@@ -121,6 +130,7 @@ export interface DanmakuEngineOptions extends EngineHooks {
     readonly contractVersion: number;
     readonly renderer: DanmakuRenderer;
     readonly viewport: DanmakuViewport;
+    readonly layout?: DanmakuLayout;
     readonly clock?: Clock;
     readonly limits?: Partial<DanmakuLimits>;
     readonly policy?: Partial<DanmakuPolicy>;
