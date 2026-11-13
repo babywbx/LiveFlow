@@ -63,7 +63,7 @@ function validateContinuityPolicy(policy: ContinuityPolicy): void {
     throw new InvalidContinuityPolicyError('maxStallSeeksPerSource')
   }
 
-  if (policy.catchupRate <= 1 || policy.catchupRate > 1.1 || !Number.isFinite(policy.catchupRate)) {
+  if (policy.catchupRate < 1 || policy.catchupRate > 1.1 || !Number.isFinite(policy.catchupRate)) {
     throw new InvalidContinuityPolicyError('catchupRate')
   }
   if (

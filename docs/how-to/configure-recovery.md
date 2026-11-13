@@ -28,6 +28,9 @@ const controller = createContinuityController({
 `catchupRate` 不宜为了快速追赶而大幅提高。过高速度会造成听感明显变化，也会快速消耗前向
 缓冲。
 
+不希望改变播放速度时，把 `catchupRate` 设为 `1`。控制器始终以 `1.0x` 播放，尾距在硬阈值
+以下时自然累积，超过 `hardResyncThresholdSeconds` 后照常发出 `latency` 恢复请求。
+
 ## 调整硬恢复
 
 尾距持续超过 `hardResyncThresholdSeconds` 时，控制器发出 `latency` 恢复请求。LiveFlow

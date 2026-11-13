@@ -5,6 +5,7 @@ import {
   CONTRACT_VERSION,
   CapacityExceededError,
   ContractVersionMismatchError,
+  InvalidContinuityPolicyError,
   PreparedSourceGenerationMismatchError,
   SourceTransitionError,
 } from '../../src/index.js'
@@ -166,6 +167,71 @@ describe('continuity controller', () => {
     expect(adapter.playbackRate()).toBe(1)
 
     await controller.destroy()
+  })
+
+  it('keeps normal speed but still recovers hard latency when catchup rate is 1', async () => {
+    const adapter = new FakePlayerAdapter()
+    const clock = new FakeClock()
+    const reasons: string[] = []
+    const diagnostics: string[] = []
+    const controller = createContinuityController({
+      adapter,
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      policy: { catchupRate: 1, maxStallSeeksPerSource: 0 },
+      onRecoveryRequest: (request) => {
+        reasons.push(request.reason)
+      },
+      onDiagnostic: (event) => {
+        diagnostics.push(event.code)
+      },
+    })
+
+    await controller.setSource({
+      url: 'https://media.example/live.flv',
+      kind: 'flv',
+    })
+    adapter.emit({ type: 'first-frame', generation: 1 })
+    adapter.setMetrics({
+      currentTimeSeconds: 12,
+      bufferedAheadSeconds: 3,
+      liveEdgeDistanceSeconds: 3,
+      playbackRate: 1,
+      stalledSince: null,
+      droppedFrames: null,
+    })
+
+    clock.advanceBy(2_000)
+
+    expect(adapter.playbackRate()).toBe(1)
+    expect(reasons).toEqual([])
+
+    adapter.setMetrics({
+      currentTimeSeconds: 20,
+      bufferedAheadSeconds: 10,
+      liveEdgeDistanceSeconds: 9,
+      playbackRate: 1,
+      stalledSince: null,
+      droppedFrames: null,
+    })
+    clock.advanceBy(2_000)
+
+    expect(adapter.playbackRate()).toBe(1)
+    expect(reasons).toEqual(['latency'])
+    expect(diagnostics).not.toContain('catchup-started')
+
+    await controller.destroy()
+  })
+
+  it('rejects a catchup rate below normal speed', () => {
+    expect(() =>
+      createContinuityController({
+        adapter: new FakePlayerAdapter(),
+        contractVersion: CONTRACT_VERSION,
+        clock: new FakeClock(),
+        policy: { catchupRate: 0.99 },
+      }),
+    ).toThrow(InvalidContinuityPolicyError)
   })
 
   it('stops catchup immediately when forward buffer becomes unsafe', async () => {
