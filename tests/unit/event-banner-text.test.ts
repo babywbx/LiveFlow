@@ -53,6 +53,19 @@ describe('event banner text fitting', () => {
     }
   })
 
+  it('fits whole joined emoji and combining marks at every width boundary', () => {
+    const graphemes = ['👩‍👩‍👧‍👦', 'á', '🇨🇳', 'x']
+    const text = graphemes.join('')
+    const prefixes = [
+      '',
+      ...graphemes.map((_entry, index) => graphemes.slice(0, index + 1).join('')),
+    ]
+    for (let width = 1; width < text.length; width += 1) {
+      const expected = prefixes.filter((prefix) => prefix.length + 1 <= width).at(-1) ?? ''
+      expect(fitBannerText(text, width, [1], (value) => value.length).text).toBe(`${expected}…`)
+    }
+  })
+
   it('collapses whitespace into a single line and rejects empty or oversized text', () => {
     expect(normalizeBannerText('  first \n  second  ', 64, 'content.text')).toBe('first second')
     expect(() => normalizeBannerText('   ', 64, 'content.text')).toThrow(InvalidOverlayEventError)

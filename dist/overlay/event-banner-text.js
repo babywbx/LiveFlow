@@ -1,12 +1,13 @@
 import { InvalidOverlayConfigurationError, InvalidOverlayEventError } from './errors.js';
 export const MAX_BANNER_FONT_STEPS = 8;
 const ELLIPSIS = '…';
+let segmenter;
 export function normalizeBannerText(value, maxLength, field) {
     if (typeof value !== 'string' || value.length > maxLength) {
         throw new InvalidOverlayEventError(field);
     }
     const text = value.replace(/\s+/gu, ' ').trim();
-    if (text.length === 0 || text.length > maxLength) {
+    if (text.length === 0) {
         throw new InvalidOverlayEventError(field);
     }
     return text;
@@ -24,10 +25,10 @@ export function validateBannerFontSizes(fontSizes) {
     let previous = Number.POSITIVE_INFINITY;
     for (let index = 0; index < count; index += 1) {
         const fontSize = fontSizes[index];
-        if (fontSize === undefined) {
-            throw new InvalidOverlayConfigurationError('layout.fontSizes');
-        }
-        if (!Number.isFinite(fontSize) || fontSize <= 0 || fontSize >= previous) {
+        if (fontSize === undefined ||
+            !Number.isFinite(fontSize) ||
+            fontSize <= 0 ||
+            fontSize >= previous) {
             throw new InvalidOverlayConfigurationError('layout.fontSizes');
         }
         validated.push(fontSize);
@@ -56,20 +57,26 @@ export function fitBannerText(text, maxWidth, fontSizes, measure) {
         }
     }
     const fontSize = smallestBannerFontSize(steps);
-    const graphemes = splitGraphemes(text);
+    segmenter ??= new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+    const graphemes = segmenter.segment(text);
     let low = 0;
-    let high = graphemes.length;
+    let high = text.length;
     while (low < high) {
         const middle = Math.ceil((low + high) / 2);
-        const candidate = `${graphemes.slice(0, middle).join('')}${ELLIPSIS}`;
+        const grapheme = graphemes.containing(middle - 1);
+        if (grapheme === undefined) {
+            throw new InvalidOverlayEventError('content.text');
+        }
+        const end = grapheme.index + grapheme.segment.length;
+        const candidate = `${text.slice(0, end)}${ELLIPSIS}`;
         if (measuredWidth(candidate, fontSize, measure) <= maxWidth) {
-            low = middle;
+            low = end;
         }
         else {
-            high = middle - 1;
+            high = grapheme.index;
         }
     }
-    const truncated = `${graphemes.slice(0, Math.max(0, low)).join('')}${ELLIPSIS}`;
+    const truncated = `${text.slice(0, low)}${ELLIPSIS}`;
     if (measuredWidth(truncated, fontSize, measure) > maxWidth) {
         throw new InvalidOverlayConfigurationError('layout.maxTextWidth');
     }
@@ -81,8 +88,4 @@ function measuredWidth(text, fontSize, measure) {
         throw new InvalidOverlayConfigurationError('measureText');
     }
     return width;
-}
-function splitGraphemes(value) {
-    const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-    return Array.from(segmenter.segment(value), (entry) => entry.segment);
 }
