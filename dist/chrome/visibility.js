@@ -1,4 +1,4 @@
-import { createSystemClock } from '../shared/clock.js';
+import { createSystemTimerClock } from '../shared/clock.js';
 import { CapacityExceededError, LiveFlowError } from '../shared/errors.js';
 import { ChromeVisibilityDestroyedError, ChromeVisibilityPinUnderflowError, InvalidChromeVisibilityConfigurationError, } from './errors.js';
 export const DEFAULT_CHROME_IDLE_HIDE_MS = 2_500;
@@ -9,7 +9,7 @@ export function createChromeVisibility(options = {}) {
     if (!Number.isFinite(idleHideMs) || idleHideMs <= 0) {
         throw new InvalidChromeVisibilityConfigurationError('idleHideMs');
     }
-    return new DefaultChromeVisibilityController(options.clock ?? createSystemClock(), idleHideMs, options.hold ?? false);
+    return new DefaultChromeVisibilityController(options.clock ?? createSystemTimerClock(), idleHideMs, options.hold ?? false);
 }
 class DefaultChromeVisibilityController {
     clock;

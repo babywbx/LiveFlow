@@ -1,69 +1,67 @@
 import { CapacityExceededError } from './errors.js';
-export function createSystemClock() {
+function systemTimers(frames) {
     const maxActiveHandles = 256;
+    const timers = new Map();
     let nextHandle = 1;
-    const timerCancellations = new Map();
-    const frameCancellations = new Map();
-    return {
+    function allocateHandle() {
+        if (timers.size + (frames?.size ?? 0) >= maxActiveHandles) {
+            throw new CapacityExceededError('system-clock-handles', maxActiveHandles);
+        }
+        return nextHandle++;
+    }
+    const clock = {
         now() {
             return globalThis.performance.now();
         },
         setTimeout(handler, delayMs) {
-            ensureCapacity();
-            const handle = nextHandle;
-            nextHandle += 1;
+            const handle = allocateHandle();
             const nativeHandle = globalThis.setTimeout(() => {
-                timerCancellations.delete(handle);
+                timers.delete(handle);
                 handler();
             }, delayMs);
-            timerCancellations.set(handle, () => {
-                globalThis.clearTimeout(nativeHandle);
-            });
+            timers.set(handle, nativeHandle);
             return handle;
         },
         clearTimeout(handle) {
-            const cancel = timerCancellations.get(handle);
-            if (cancel === undefined) {
-                return;
-            }
-            timerCancellations.delete(handle);
-            cancel();
-        },
-        requestFrame(handler) {
-            ensureCapacity();
-            const handle = nextHandle;
-            nextHandle += 1;
-            if (typeof globalThis.requestAnimationFrame === 'function') {
-                const nativeHandle = globalThis.requestAnimationFrame((timestampMs) => {
-                    frameCancellations.delete(handle);
-                    handler(timestampMs);
-                });
-                frameCancellations.set(handle, () => {
-                    globalThis.cancelAnimationFrame(nativeHandle);
-                });
-                return handle;
-            }
-            const nativeHandle = globalThis.setTimeout(() => {
-                frameCancellations.delete(handle);
-                handler(globalThis.performance.now());
-            }, 16);
-            frameCancellations.set(handle, () => {
+            const nativeHandle = timers.get(handle);
+            if (nativeHandle !== undefined) {
                 globalThis.clearTimeout(nativeHandle);
-            });
+                timers.delete(handle);
+            }
+        },
+    };
+    return { clock, allocateHandle };
+}
+export function createSystemTimerClock() {
+    return systemTimers().clock;
+}
+export function createSystemClock() {
+    const frames = new Map();
+    const { clock, allocateHandle } = systemTimers(frames);
+    return {
+        ...clock,
+        requestFrame(handler) {
+            const handle = allocateHandle();
+            const onFrame = (timestampMs) => {
+                frames.delete(handle);
+                handler(timestampMs ?? clock.now());
+            };
+            if (typeof globalThis.requestAnimationFrame === 'function') {
+                const nativeHandle = globalThis.requestAnimationFrame(onFrame);
+                frames.set(handle, () => globalThis.cancelAnimationFrame(nativeHandle));
+            }
+            else {
+                const nativeHandle = globalThis.setTimeout(onFrame, 16);
+                frames.set(handle, () => globalThis.clearTimeout(nativeHandle));
+            }
             return handle;
         },
         cancelFrame(handle) {
-            const cancel = frameCancellations.get(handle);
-            if (cancel === undefined) {
-                return;
+            const cancel = frames.get(handle);
+            if (cancel !== undefined) {
+                cancel();
+                frames.delete(handle);
             }
-            frameCancellations.delete(handle);
-            cancel();
         },
     };
-    function ensureCapacity() {
-        if (timerCancellations.size + frameCancellations.size >= maxActiveHandles) {
-            throw new CapacityExceededError('system-clock-handles', maxActiveHandles);
-        }
-    }
 }

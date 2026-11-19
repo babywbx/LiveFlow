@@ -1,4 +1,4 @@
-import { createSystemClock, type Clock, type TimerHandle } from '../shared/clock.js'
+import { createSystemTimerClock, type TimerClock, type TimerHandle } from '../shared/clock.js'
 import { CONTRACT_VERSION } from '../shared/contract.js'
 import { createDiagnosticEmitter, type DiagnosticEmitter } from '../shared/diagnostic-emitter.js'
 import type { Destroyable } from '../shared/disposable.js'
@@ -74,8 +74,8 @@ export function createOverlayEngine(options: OverlayEngineOptions): OverlayEngin
 
 class RealtimeOverlayEngine implements OverlayEngine {
   private readonly limits
-  private readonly clock: Clock
-  private readonly diagnostic: DiagnosticEmitter
+  private readonly clock: TimerClock
+  private readonly emitDiagnostic: DiagnosticEmitter
   private readonly defaultRenderer: OverlayRenderer
   private readonly renderers = new Map<string, OverlayRenderer>()
   private readonly ownedRenderers = new Set<OverlayRenderer>()
@@ -104,8 +104,8 @@ class RealtimeOverlayEngine implements OverlayEngine {
 
   constructor(private readonly options: OverlayEngineOptions) {
     this.limits = resolveOverlayLimits(options.limits)
-    this.clock = options.clock ?? createSystemClock()
-    this.diagnostic = createDiagnosticEmitter(options, this.clock)
+    this.clock = options.clock ?? createSystemTimerClock()
+    this.emitDiagnostic = createDiagnosticEmitter('overlay', options, this.clock)
     validateInstanceId(options.instanceId, this.limits.maxKeyLength)
     this.instanceState = options.instanceState ?? DEFAULT_OVERLAY_INSTANCE_STATE
     validateInstanceState(this.instanceState)
@@ -162,13 +162,13 @@ class RealtimeOverlayEngine implements OverlayEngine {
     }
     if (this.dedupe.size >= this.limits.maxDedupeEntries) {
       this.counters.dropped += 1
-      this.emitDiagnostic('overlay-event-dropped', 'warn', { reason: 'dedupe-capacity' })
+      this.emitDiagnostic('overlay-event-dropped', 'warn', undefined, { reason: 'dedupe-capacity' })
       return { status: 'dropped' }
     }
 
     if (!this.enqueue(event)) {
       this.counters.dropped += 1
-      this.emitDiagnostic('overlay-event-dropped', 'warn', { reason: 'queue-overload' })
+      this.emitDiagnostic('overlay-event-dropped', 'warn', undefined, { reason: 'queue-overload' })
       return { status: 'dropped' }
     }
     this.dedupe.set(dedupeKey, { event, phase: 'pending' })
@@ -310,7 +310,7 @@ class RealtimeOverlayEngine implements OverlayEngine {
     this.pending.pop()
     this.removePendingDedupe(lowest)
     this.counters.dropped += 1
-    this.emitDiagnostic('overlay-event-dropped', 'warn', { reason: 'priority-eviction' })
+    this.emitDiagnostic('overlay-event-dropped', 'warn', undefined, { reason: 'priority-eviction' })
     this.pending.push(event)
     this.sortPending()
     return true
@@ -552,7 +552,7 @@ class RealtimeOverlayEngine implements OverlayEngine {
       card.renderHandle.destroy()
       card.renderHandle = null
       card.renderHandle = card.renderer.render(card.event, presentation)
-      this.emitDiagnostic('overlay-presentation-changed', 'debug', { presentation })
+      this.emitDiagnostic('overlay-presentation-changed', 'debug', undefined, { presentation })
     } catch {
       this.finishCard(cardId)
       this.counters.dropped += 1
@@ -745,18 +745,6 @@ class RealtimeOverlayEngine implements OverlayEngine {
       this.options.onError(error)
     } catch {
       return
-    }
-  }
-
-  private emitDiagnostic(
-    code: string,
-    level: 'debug' | 'info' | 'warn',
-    detail?: Readonly<Record<string, string | number | boolean>>,
-  ): void {
-    if (detail === undefined) {
-      this.diagnostic.emit({ scope: 'overlay', code, level })
-    } else {
-      this.diagnostic.emit({ scope: 'overlay', code, level, detail })
     }
   }
 

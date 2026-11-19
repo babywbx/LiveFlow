@@ -13,23 +13,19 @@ export const DEFAULT_CONTINUITY_POLICY = {
     maxStallSeeksPerSource: 3,
 };
 export function resolveContinuityPolicy(overrides) {
-    const policy = {
-        targetLatencySeconds: overrides?.targetLatencySeconds ?? DEFAULT_CONTINUITY_POLICY.targetLatencySeconds,
-        softCatchupThresholdSeconds: overrides?.softCatchupThresholdSeconds ??
-            DEFAULT_CONTINUITY_POLICY.softCatchupThresholdSeconds,
-        hardResyncThresholdSeconds: overrides?.hardResyncThresholdSeconds ?? DEFAULT_CONTINUITY_POLICY.hardResyncThresholdSeconds,
-        maxPlausibleLiveEdgeSeconds: overrides?.maxPlausibleLiveEdgeSeconds ??
-            DEFAULT_CONTINUITY_POLICY.maxPlausibleLiveEdgeSeconds,
-        catchupRate: overrides?.catchupRate ?? DEFAULT_CONTINUITY_POLICY.catchupRate,
-        recoveryCooldownMs: overrides?.recoveryCooldownMs ?? DEFAULT_CONTINUITY_POLICY.recoveryCooldownMs,
-        sourceWarmupTimeoutMs: overrides?.sourceWarmupTimeoutMs ?? DEFAULT_CONTINUITY_POLICY.sourceWarmupTimeoutMs,
-        maxAutomaticRecoveries: overrides?.maxAutomaticRecoveries ?? DEFAULT_CONTINUITY_POLICY.maxAutomaticRecoveries,
-        maxGapJumpSeconds: overrides?.maxGapJumpSeconds ?? DEFAULT_CONTINUITY_POLICY.maxGapJumpSeconds,
-        stallNudgeSeconds: overrides?.stallNudgeSeconds ?? DEFAULT_CONTINUITY_POLICY.stallNudgeSeconds,
-        maxStallSeeksPerSource: overrides?.maxStallSeeksPerSource ?? DEFAULT_CONTINUITY_POLICY.maxStallSeeksPerSource,
-    };
+    const policy = { ...DEFAULT_CONTINUITY_POLICY };
+    if (overrides != null) {
+        for (const field in policy) {
+            if (isPolicyField(field)) {
+                policy[field] = overrides[field] ?? policy[field];
+            }
+        }
+    }
     validateContinuityPolicy(policy);
     return policy;
+}
+function isPolicyField(field) {
+    return Object.hasOwn(DEFAULT_CONTINUITY_POLICY, field);
 }
 function validateContinuityPolicy(policy) {
     requireFinitePositive('targetLatencySeconds', policy.targetLatencySeconds);

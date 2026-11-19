@@ -10,4 +10,6 @@ export interface Clock {
 export interface RandomSource {
     next(): number;
 }
+export type TimerClock = Pick<Clock, 'now' | 'setTimeout' | 'clearTimeout'>;
+export declare function createSystemTimerClock(): TimerClock;
 export declare function createSystemClock(): Clock;

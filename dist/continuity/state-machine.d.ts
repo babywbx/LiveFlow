@@ -4,38 +4,6 @@ export interface ContinuityMachineState {
     readonly generation: number;
     readonly automaticRecoveryCount: number;
 }
-export type ContinuityMachineEvent = {
-    readonly type: 'source-requested';
-    readonly generation: number;
-} | {
-    readonly type: 'source-prepared';
-    readonly generation: number;
-} | {
-    readonly type: 'first-frame';
-    readonly generation: number;
-} | {
-    readonly type: 'playback-degraded';
-    readonly generation: number;
-} | {
-    readonly type: 'playback-resumed';
-    readonly generation: number;
-} | {
-    readonly type: 'recovery-requested';
-    readonly generation: number;
-} | {
-    readonly type: 'recovery-cancelled';
-    readonly generation: number;
-} | {
-    readonly type: 'recovery-exhausted';
-    readonly generation: number;
-} | {
-    readonly type: 'source-failed';
-    readonly generation: number;
-} | {
-    readonly type: 'playback-suspended';
-    readonly generation: number;
-} | {
-    readonly type: 'destroyed';
-};
+export type ContinuityMachineEvent = 'source-requested' | 'source-prepared' | 'first-frame' | 'playback-degraded' | 'playback-resumed' | 'recovery-requested' | 'recovery-cancelled' | 'recovery-exhausted' | 'source-failed' | 'playback-suspended' | 'destroyed';
 export declare const INITIAL_CONTINUITY_STATE: ContinuityMachineState;
-export declare function reduceContinuityState(current: ContinuityMachineState, event: ContinuityMachineEvent): ContinuityMachineState;
+export declare function reduceContinuityState(current: ContinuityMachineState, event: ContinuityMachineEvent, generation: number): ContinuityMachineState;

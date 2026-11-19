@@ -1,4 +1,4 @@
-import { createSystemClock, type Clock, type TimerHandle } from '../shared/clock.js'
+import { createSystemTimerClock, type TimerClock, type TimerHandle } from '../shared/clock.js'
 import { CapacityExceededError, LiveFlowError } from '../shared/errors.js'
 import {
   ChromeVisibilityDestroyedError,
@@ -26,7 +26,7 @@ export function createChromeVisibility(
   }
 
   return new DefaultChromeVisibilityController(
-    options.clock ?? createSystemClock(),
+    options.clock ?? createSystemTimerClock(),
     idleHideMs,
     options.hold ?? false,
   )
@@ -45,7 +45,7 @@ class DefaultChromeVisibilityController implements ChromeVisibilityController {
   private visible = false
 
   constructor(
-    private readonly clock: Clock,
+    private readonly clock: TimerClock,
     private readonly idleHideMs: number,
     private hold: boolean,
   ) {}

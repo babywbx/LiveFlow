@@ -24,7 +24,8 @@ class FailingClock implements Clock {
 describe('diagnostic emitter', () => {
   it('does not let a diagnostic clock failure escape into engine control flow', () => {
     let calls = 0
-    const emitter = createDiagnosticEmitter(
+    const emit = createDiagnosticEmitter(
+      'continuity',
       {
         onDiagnostic(): void {
           calls += 1
@@ -33,13 +34,7 @@ describe('diagnostic emitter', () => {
       new FailingClock(),
     )
 
-    expect(() =>
-      emitter.emit({
-        scope: 'continuity',
-        code: 'synthetic',
-        level: 'warn',
-      }),
-    ).not.toThrow()
+    expect(() => emit('synthetic', 'warn')).not.toThrow()
     expect(calls).toBe(0)
   })
 })

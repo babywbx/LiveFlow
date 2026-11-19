@@ -16,77 +16,77 @@ export interface RandomSource {
   next(): number
 }
 
-export function createSystemClock(): Clock {
-  const maxActiveHandles = 256
-  let nextHandle = 1
-  const timerCancellations = new Map<number, () => void>()
-  const frameCancellations = new Map<number, () => void>()
+export type TimerClock = Pick<Clock, 'now' | 'setTimeout' | 'clearTimeout'>
 
-  return {
+function systemTimers(frames?: ReadonlyMap<number, () => void>): {
+  clock: TimerClock
+  allocateHandle: () => number
+} {
+  const maxActiveHandles = 256
+  const timers = new Map<number, ReturnType<typeof globalThis.setTimeout>>()
+  let nextHandle = 1
+
+  function allocateHandle(): number {
+    if (timers.size + (frames?.size ?? 0) >= maxActiveHandles) {
+      throw new CapacityExceededError('system-clock-handles', maxActiveHandles)
+    }
+    return nextHandle++
+  }
+
+  const clock: TimerClock = {
     now(): number {
       return globalThis.performance.now()
     },
     setTimeout(handler: () => void, delayMs: number): TimerHandle {
-      ensureCapacity()
-      const handle = nextHandle
-      nextHandle += 1
+      const handle = allocateHandle()
       const nativeHandle = globalThis.setTimeout(() => {
-        timerCancellations.delete(handle)
+        timers.delete(handle)
         handler()
       }, delayMs)
-      timerCancellations.set(handle, () => {
-        globalThis.clearTimeout(nativeHandle)
-      })
+      timers.set(handle, nativeHandle)
       return handle
     },
     clearTimeout(handle: TimerHandle): void {
-      const cancel = timerCancellations.get(handle)
-      if (cancel === undefined) {
-        return
-      }
-
-      timerCancellations.delete(handle)
-      cancel()
-    },
-    requestFrame(handler: (timestampMs: number) => void): FrameHandle {
-      ensureCapacity()
-      const handle = nextHandle
-      nextHandle += 1
-
-      if (typeof globalThis.requestAnimationFrame === 'function') {
-        const nativeHandle = globalThis.requestAnimationFrame((timestampMs) => {
-          frameCancellations.delete(handle)
-          handler(timestampMs)
-        })
-        frameCancellations.set(handle, () => {
-          globalThis.cancelAnimationFrame(nativeHandle)
-        })
-        return handle
-      }
-
-      const nativeHandle = globalThis.setTimeout(() => {
-        frameCancellations.delete(handle)
-        handler(globalThis.performance.now())
-      }, 16)
-      frameCancellations.set(handle, () => {
+      const nativeHandle = timers.get(handle)
+      if (nativeHandle !== undefined) {
         globalThis.clearTimeout(nativeHandle)
-      })
+        timers.delete(handle)
+      }
+    },
+  }
+  return { clock, allocateHandle }
+}
+
+export function createSystemTimerClock(): TimerClock {
+  return systemTimers().clock
+}
+
+export function createSystemClock(): Clock {
+  const frames = new Map<number, () => void>()
+  const { clock, allocateHandle } = systemTimers(frames)
+  return {
+    ...clock,
+    requestFrame(handler: (timestampMs: number) => void): FrameHandle {
+      const handle = allocateHandle()
+      const onFrame = (timestampMs?: number): void => {
+        frames.delete(handle)
+        handler(timestampMs ?? clock.now())
+      }
+      if (typeof globalThis.requestAnimationFrame === 'function') {
+        const nativeHandle = globalThis.requestAnimationFrame(onFrame)
+        frames.set(handle, () => globalThis.cancelAnimationFrame(nativeHandle))
+      } else {
+        const nativeHandle = globalThis.setTimeout(onFrame, 16)
+        frames.set(handle, () => globalThis.clearTimeout(nativeHandle))
+      }
       return handle
     },
     cancelFrame(handle: FrameHandle): void {
-      const cancel = frameCancellations.get(handle)
-      if (cancel === undefined) {
-        return
+      const cancel = frames.get(handle)
+      if (cancel !== undefined) {
+        cancel()
+        frames.delete(handle)
       }
-
-      frameCancellations.delete(handle)
-      cancel()
     },
-  }
-
-  function ensureCapacity(): void {
-    if (timerCancellations.size + frameCancellations.size >= maxActiveHandles) {
-      throw new CapacityExceededError('system-clock-handles', maxActiveHandles)
-    }
   }
 }

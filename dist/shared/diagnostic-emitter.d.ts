@@ -1,6 +1,4 @@
 import type { Clock } from './clock.js';
-import type { DiagnosticEvent, EngineHooks } from './diagnostics.js';
-export interface DiagnosticEmitter {
-    emit(event: DiagnosticEvent): void;
-}
-export declare function createDiagnosticEmitter(hooks: EngineHooks, clock: Clock): DiagnosticEmitter;
+import type { DiagnosticDetail, DiagnosticLevel, DiagnosticScope, EngineHooks } from './diagnostics.js';
+export type DiagnosticEmitter = (code: string, level: DiagnosticLevel, generation?: number, detail?: DiagnosticDetail) => void;
+export declare function createDiagnosticEmitter(scope: DiagnosticScope, hooks: EngineHooks, clock: Pick<Clock, 'now'>): DiagnosticEmitter;

@@ -3,30 +3,30 @@ export const INITIAL_CONTINUITY_STATE = {
     generation: 0,
     automaticRecoveryCount: 0,
 };
-export function reduceContinuityState(current, event) {
+export function reduceContinuityState(current, event, generation) {
     if (current.state === 'stopped') {
         return current;
     }
-    if (event.type === 'destroyed') {
+    if (event === 'destroyed') {
         return {
             ...current,
             state: 'stopped',
         };
     }
-    if (event.type === 'source-requested') {
-        if (event.generation <= current.generation) {
+    if (event === 'source-requested') {
+        if (generation <= current.generation) {
             return current;
         }
         return {
             state: 'resolving',
-            generation: event.generation,
+            generation,
             automaticRecoveryCount: current.automaticRecoveryCount,
         };
     }
-    if (event.generation !== current.generation) {
+    if (generation !== current.generation) {
         return current;
     }
-    switch (event.type) {
+    switch (event) {
         case 'source-prepared':
             if (current.state !== 'resolving') {
                 return current;

@@ -1,30 +1,30 @@
-import { createSystemClock } from '../shared/clock.js';
+import { createSystemTimerClock, } from '../shared/clock.js';
 import { CONTRACT_VERSION } from '../shared/contract.js';
 import { createDiagnosticEmitter } from '../shared/diagnostic-emitter.js';
 import { CapacityExceededError, ContractVersionMismatchError, InvalidPlaybackMetricsError, LiveFlowError, PreparedSourceGenerationMismatchError, sanitizeErrorName, SourceTransitionError, } from '../shared/errors.js';
 import { validatePlaybackMetrics } from './metrics.js';
 import { resolveContinuityPolicy } from './policy.js';
 import { INITIAL_CONTINUITY_STATE, reduceContinuityState, } from './state-machine.js';
+const HARD_LATENCY_CONFIRMATION_SAMPLES = 4;
+const MAX_SNAPSHOT_LISTENERS = 32;
+const METRICS_SAMPLE_INTERVAL_MS = 500;
+const MIN_CATCHUP_BUFFER_SECONDS = 1;
+const RATE_CHANGE_COOLDOWN_MS = 1_000;
+const STALL_DEBOUNCE_MS = 400;
 export function createContinuityController(options) {
     if (options.contractVersion !== CONTRACT_VERSION) {
         throw new ContractVersionMismatchError(CONTRACT_VERSION, options.contractVersion);
     }
-    const clock = options.clock ?? createSystemClock();
-    return new DefaultContinuityController(options.adapter, clock, resolveContinuityPolicy(options.policy), options.onRecoveryRequest, createDiagnosticEmitter(options, clock), options.pageActivity);
+    const clock = options.clock ?? createSystemTimerClock();
+    return new DefaultContinuityController(options.adapter, clock, resolveContinuityPolicy(options.policy), options.onRecoveryRequest, createDiagnosticEmitter('continuity', options, clock), options.pageActivity);
 }
 class DefaultContinuityController {
     adapter;
     clock;
     policy;
     onRecoveryRequest;
-    diagnostics;
+    emitDiagnostic;
     pageActivity;
-    static HARD_LATENCY_CONFIRMATION_SAMPLES = 4;
-    static MAX_SNAPSHOT_LISTENERS = 32;
-    static METRICS_SAMPLE_INTERVAL_MS = 500;
-    static MIN_CATCHUP_BUFFER_SECONDS = 1;
-    static RATE_CHANGE_COOLDOWN_MS = 1_000;
-    static STALL_DEBOUNCE_MS = 400;
     machine = INITIAL_CONTINUITY_STATE;
     listeners = new Set();
     unsubscribeAdapter;
@@ -47,12 +47,12 @@ class DefaultContinuityController {
     unsubscribePageActivity = null;
     resumeFlight = null;
     readyGeneration = null;
-    constructor(adapter, clock, policy, onRecoveryRequest, diagnostics, pageActivity) {
+    constructor(adapter, clock, policy, onRecoveryRequest, emitDiagnostic, pageActivity) {
         this.adapter = adapter;
         this.clock = clock;
         this.policy = policy;
         this.onRecoveryRequest = onRecoveryRequest;
-        this.diagnostics = diagnostics;
+        this.emitDiagnostic = emitDiagnostic;
         this.pageActivity = pageActivity;
         this.unsubscribeAdapter = this.adapter.subscribe((event) => {
             this.handlePlaybackEvent(event);
@@ -75,7 +75,7 @@ class DefaultContinuityController {
         this.applyPlaybackRateForSourceChange();
         const generation = this.machine.generation + 1;
         this.readyGeneration = null;
-        this.transition({ type: 'source-requested', generation });
+        this.transition('source-requested', generation);
         this.scheduleSourceTimeout(generation);
         let prepared;
         try {
@@ -85,7 +85,7 @@ class DefaultContinuityController {
             if (this.isCurrentGeneration(generation)) {
                 this.cancelSourceTimeout();
             }
-            this.transition({ type: 'source-failed', generation });
+            this.transition('source-failed', generation);
             throw new SourceTransitionError('prepare', generation, sanitizeErrorName(error));
         }
         if (prepared.generation !== generation) {
@@ -93,7 +93,7 @@ class DefaultContinuityController {
             if (this.isCurrentGeneration(generation)) {
                 this.cancelSourceTimeout();
             }
-            this.transition({ type: 'source-failed', generation });
+            this.transition('source-failed', generation);
             throw new PreparedSourceGenerationMismatchError(generation, prepared.generation);
         }
         if (!this.isCurrentGeneration(generation) || this.machine.state !== 'resolving') {
@@ -101,7 +101,7 @@ class DefaultContinuityController {
             return;
         }
         this.warmingPrepared = prepared;
-        this.transition({ type: 'source-prepared', generation });
+        this.transition('source-prepared', generation);
         try {
             await this.adapter.commit(prepared, generation);
         }
@@ -109,7 +109,7 @@ class DefaultContinuityController {
             if (this.isCurrentGeneration(generation)) {
                 this.cancelSourceTimeout();
             }
-            this.transition({ type: 'source-failed', generation });
+            this.transition('source-failed', generation);
             const failedPrepared = this.takeWarmingPrepared(generation);
             if (failedPrepared !== null) {
                 await this.discardAfterTransitionFailure(failedPrepared, generation, 'commit');
@@ -136,7 +136,7 @@ class DefaultContinuityController {
             if (this.isCurrentGeneration(generation)) {
                 this.cancelSourceTimeout();
             }
-            this.transition({ type: 'source-failed', generation });
+            this.transition('source-failed', generation);
             const failedPrepared = this.takeWarmingPrepared(generation);
             if (failedPrepared !== null) {
                 await this.discardAfterTransitionFailure(failedPrepared, generation, 'play');
@@ -165,15 +165,9 @@ class DefaultContinuityController {
         this.outstandingRecoveries -= 1;
         this.lastRecoveryAt = null;
         this.lastRecoveryGeneration = null;
-        this.transition({ type: 'recovery-cancelled', generation });
-        this.diagnostics.emit({
-            scope: 'continuity',
-            code: 'recovery-cancelled',
-            level: 'info',
-            generation,
-            detail: {
-                attempts: this.machine.automaticRecoveryCount,
-            },
+        this.transition('recovery-cancelled', generation);
+        this.emitDiagnostic('recovery-cancelled', 'info', generation, {
+            attempts: this.machine.automaticRecoveryCount,
         });
     }
     classifyPlayRejection(error, errorName) {
@@ -211,18 +205,13 @@ class DefaultContinuityController {
         const previousSuspension = this.suspension;
         const suspension = { reason, generation };
         this.suspension = suspension;
-        if (!this.transition({ type: 'playback-suspended', generation })) {
+        if (!this.transition('playback-suspended', generation)) {
             if (this.suspension === suspension) {
                 this.suspension = previousSuspension;
             }
             return;
         }
-        this.diagnostics.emit({
-            scope: 'continuity',
-            code: 'playback-suspended',
-            level: 'warn',
-            detail: { reason, generation },
-        });
+        this.emitDiagnostic('playback-suspended', 'warn', undefined, { reason, generation });
         this.watchPageActivity(suspension);
     }
     watchPageActivity(expectedSuspension) {
@@ -246,12 +235,7 @@ class DefaultContinuityController {
                 }
                 catch {
                     this.unsubscribePageActivity = unsubscribe;
-                    this.diagnostics.emit({
-                        scope: 'continuity',
-                        code: 'page-activity-unsubscribe-failed',
-                        level: 'warn',
-                        generation: this.machine.generation,
-                    });
+                    this.emitDiagnostic('page-activity-unsubscribe-failed', 'warn', this.machine.generation);
                 }
                 return;
             }
@@ -275,12 +259,7 @@ class DefaultContinuityController {
                     this.unsubscribePageActivity = unsubscribe;
                 }
             }
-            this.diagnostics.emit({
-                scope: 'continuity',
-                code: 'page-activity-subscribe-failed',
-                level: 'warn',
-                generation: this.machine.generation,
-            });
+            this.emitDiagnostic('page-activity-subscribe-failed', 'warn', this.machine.generation);
         }
     }
     retrySuspendedPlayFromPageActivity() {
@@ -290,15 +269,10 @@ class DefaultContinuityController {
                 return;
             }
             this.clearSuspension();
-            if (!this.transition({ type: 'playback-degraded', generation: suspension.generation })) {
+            if (!this.transition('playback-degraded', suspension.generation)) {
                 return;
             }
-            this.diagnostics.emit({
-                scope: 'continuity',
-                code: 'playback-resume-failed',
-                level: 'warn',
-                generation: suspension.generation,
-            });
+            this.emitDiagnostic('playback-resume-failed', 'warn', suspension.generation);
             this.scheduleRecovery('playback-error', 0, suspension.generation);
         });
     }
@@ -339,7 +313,7 @@ class DefaultContinuityController {
         }
         this.clearPendingRecovery();
         this.cancelSourceTimeout();
-        this.transition({ type: 'playback-resumed', generation: suspension.generation });
+        this.transition('playback-resumed', suspension.generation);
         this.scheduleMonitoring();
     }
     clearSuspension() {
@@ -348,12 +322,7 @@ class DefaultContinuityController {
             this.releasePageActivitySubscription();
         }
         catch {
-            this.diagnostics.emit({
-                scope: 'continuity',
-                code: 'page-activity-unsubscribe-failed',
-                level: 'warn',
-                generation: this.machine.generation,
-            });
+            this.emitDiagnostic('page-activity-unsubscribe-failed', 'warn', this.machine.generation);
         }
     }
     releasePageActivitySubscription() {
@@ -379,9 +348,8 @@ class DefaultContinuityController {
     }
     subscribe(listener) {
         this.ensureActive();
-        if (!this.listeners.has(listener) &&
-            this.listeners.size >= DefaultContinuityController.MAX_SNAPSHOT_LISTENERS) {
-            throw new CapacityExceededError('continuity-snapshot-listeners', DefaultContinuityController.MAX_SNAPSHOT_LISTENERS);
+        if (!this.listeners.has(listener) && this.listeners.size >= MAX_SNAPSHOT_LISTENERS) {
+            throw new CapacityExceededError('continuity-snapshot-listeners', MAX_SNAPSHOT_LISTENERS);
         }
         this.listeners.add(listener);
         return () => {
@@ -406,7 +374,7 @@ class DefaultContinuityController {
         return flight;
     }
     async performDestroy() {
-        this.transition({ type: 'destroyed' });
+        this.transition('destroyed', this.machine.generation);
         let cleanupFailed = false;
         const attempt = (operation) => {
             try {
@@ -463,14 +431,8 @@ class DefaultContinuityController {
     }
     handlePlaybackEvent(event) {
         if (!this.isCurrentGeneration(event.generation)) {
-            this.diagnostics.emit({
-                scope: 'continuity',
-                code: 'stale-playback-event',
-                level: 'debug',
-                generation: event.generation,
-                detail: {
-                    currentGeneration: this.machine.generation,
-                },
+            this.emitDiagnostic('stale-playback-event', 'debug', event.generation, {
+                currentGeneration: this.machine.generation,
             });
             return;
         }
@@ -484,7 +446,7 @@ class DefaultContinuityController {
         if (event.type === 'first-frame') {
             const previousState = this.machine.state;
             this.hardLatencySamples = 0;
-            this.transition({ type: 'first-frame', generation: event.generation });
+            this.transition('first-frame', event.generation);
             if (previousState !== this.machine.state && this.machine.state === 'playing') {
                 if (this.lastRecoveryGeneration !== null &&
                     event.generation > this.lastRecoveryGeneration) {
@@ -497,82 +459,41 @@ class DefaultContinuityController {
             }
             return;
         }
-        if (event.type === 'waiting' || event.type === 'stalled') {
-            if (this.machine.state === 'resolving' || this.machine.state === 'warming') {
-                return;
-            }
-            this.hardLatencySamples = 0;
-            if (!this.applyPlaybackRateSafely(1, true, event.generation)) {
-                return;
-            }
-            if (!this.isCurrentGeneration(event.generation)) {
-                return;
-            }
-            this.cancelMonitoring();
-            if (!this.transition({ type: 'playback-degraded', generation: event.generation }) &&
-                this.machine.state === 'suspended') {
-                return;
-            }
-            this.diagnostics.emit({
-                scope: 'continuity',
-                code: 'stall-detected',
-                level: 'info',
-                generation: event.generation,
-            });
-            this.scheduleRecovery('stall', DefaultContinuityController.STALL_DEBOUNCE_MS, event.generation);
-            return;
-        }
-        if (event.type === 'error') {
-            this.hardLatencySamples = 0;
-            if (!this.applyPlaybackRateSafely(1, true, event.generation)) {
-                return;
-            }
-            if (!this.isCurrentGeneration(event.generation)) {
-                return;
-            }
-            this.cancelMonitoring();
-            if (!this.transition({ type: 'playback-degraded', generation: event.generation }) &&
-                this.machine.state === 'suspended') {
-                return;
-            }
-            if (event.recoverable) {
-                this.scheduleRecovery('playback-error', 0, event.generation);
-            }
-            else {
-                this.transition({
-                    type: 'recovery-exhausted',
-                    generation: event.generation,
-                });
-                this.diagnostics.emit({
-                    scope: 'continuity',
-                    code: 'nonrecoverable-playback-error',
-                    level: 'warn',
-                    generation: event.generation,
-                });
+        if (event.type === 'playing') {
+            if (this.machine.state !== 'warming') {
+                this.hardLatencySamples = 0;
+                this.clearPendingRecovery();
+                this.transition('playback-resumed', event.generation);
+                this.scheduleMonitoring();
             }
             return;
         }
-        if (event.type === 'ended') {
-            this.hardLatencySamples = 0;
-            if (!this.applyPlaybackRateSafely(1, true, event.generation)) {
-                return;
-            }
-            if (!this.isCurrentGeneration(event.generation)) {
-                return;
-            }
-            this.cancelMonitoring();
-            if (!this.transition({ type: 'playback-degraded', generation: event.generation }) &&
-                this.machine.state === 'suspended') {
-                return;
-            }
+        const stalled = event.type === 'waiting' || event.type === 'stalled';
+        if (stalled && (this.machine.state === 'resolving' || this.machine.state === 'warming')) {
+            return;
+        }
+        if (!stalled && event.type !== 'error' && event.type !== 'ended') {
+            return;
+        }
+        this.hardLatencySamples = 0;
+        if (!this.applyPlaybackRateSafely(1, true, event.generation)) {
+            return;
+        }
+        this.cancelMonitoring();
+        if (!this.transition('playback-degraded', event.generation) &&
+            this.machine.state === 'suspended') {
+            return;
+        }
+        if (stalled) {
+            this.emitDiagnostic('stall-detected', 'info', event.generation);
+            this.scheduleRecovery('stall', STALL_DEBOUNCE_MS, event.generation);
+        }
+        else if (event.type === 'error' && !event.recoverable) {
+            this.transition('recovery-exhausted', event.generation);
+            this.emitDiagnostic('nonrecoverable-playback-error', 'warn', event.generation);
+        }
+        else {
             this.scheduleRecovery('playback-error', 0, event.generation);
-            return;
-        }
-        if (event.type === 'playing' && this.machine.state !== 'warming') {
-            this.hardLatencySamples = 0;
-            this.clearPendingRecovery();
-            this.transition({ type: 'playback-resumed', generation: event.generation });
-            this.scheduleMonitoring();
         }
     }
     isCurrentGeneration(generation) {
@@ -592,12 +513,7 @@ class DefaultContinuityController {
         catch (error) {
             throw new SourceTransitionError('discard', generation, sanitizeErrorName(error));
         }
-        this.diagnostics.emit({
-            scope: 'continuity',
-            code: 'prepared-source-discarded',
-            level: 'debug',
-            generation,
-        });
+        this.emitDiagnostic('prepared-source-discarded', 'debug', generation);
     }
     async discardTrackedPrepared(prepared, generation) {
         if (this.warmingPrepared !== prepared) {
@@ -611,14 +527,8 @@ class DefaultContinuityController {
             await this.discardPrepared(prepared, generation);
         }
         catch {
-            this.diagnostics.emit({
-                scope: 'continuity',
-                code: 'prepared-source-cleanup-failed',
-                level: 'warn',
-                generation,
-                detail: {
-                    trigger,
-                },
+            this.emitDiagnostic('prepared-source-cleanup-failed', 'warn', generation, {
+                trigger,
             });
         }
     }
@@ -630,14 +540,14 @@ class DefaultContinuityController {
         this.warmingPrepared = null;
         return prepared;
     }
-    transition(event) {
+    transition(event, generation) {
         const previous = this.machine;
-        const next = reduceContinuityState(this.machine, event);
+        const next = reduceContinuityState(this.machine, event, generation);
         if (next === previous) {
             return false;
         }
         this.machine = next;
-        if (event.type !== 'destroyed' && next.state !== 'suspended' && this.suspension !== null) {
+        if (event !== 'destroyed' && next.state !== 'suspended' && this.suspension !== null) {
             this.clearSuspension();
         }
         if (this.machine !== next) {
@@ -650,6 +560,9 @@ class DefaultContinuityController {
         }
         else {
             this.healthySince = null;
+        }
+        if (this.listeners.size === 0) {
+            return true;
         }
         const snapshot = this.getSnapshot();
         for (const listener of this.listeners) {
@@ -675,7 +588,7 @@ class DefaultContinuityController {
             this.monitorTimer = null;
             this.samplePlayback();
             this.scheduleMonitoring();
-        }, DefaultContinuityController.METRICS_SAMPLE_INTERVAL_MS);
+        }, METRICS_SAMPLE_INTERVAL_MS);
     }
     cancelMonitoring() {
         if (this.monitorTimer === null) {
@@ -704,75 +617,48 @@ class DefaultContinuityController {
             if (!this.applyPlaybackRateSafely(1, true, generation)) {
                 return;
             }
-            this.transition({
-                type: 'playback-degraded',
-                generation,
-            });
+            this.transition('playback-degraded', generation);
             if (!this.isCurrentGeneration(generation)) {
                 return;
             }
-            this.diagnostics.emit({
-                scope: 'continuity',
-                code: error instanceof InvalidPlaybackMetricsError
-                    ? 'invalid-playback-metrics'
-                    : 'metrics-sample-failed',
-                level: 'warn',
-                generation,
-            });
+            this.emitDiagnostic(error instanceof InvalidPlaybackMetricsError
+                ? 'invalid-playback-metrics'
+                : 'metrics-sample-failed', 'warn', generation);
             this.scheduleRecovery('playback-error', 0, generation);
             return;
         }
         if (!this.isCurrentGeneration(generation) || this.machine.state !== 'playing') {
             return;
         }
-        const catchupBoundary = this.policy.targetLatencySeconds + this.policy.softCatchupThresholdSeconds;
-        if (metrics.stalledSince !== null &&
-            sampledAt - metrics.stalledSince >= DefaultContinuityController.STALL_DEBOUNCE_MS) {
+        if (metrics.stalledSince !== null && sampledAt - metrics.stalledSince >= STALL_DEBOUNCE_MS) {
             if (this.tryStallSeek(metrics, generation)) {
                 return;
             }
             if (!this.applyPlaybackRateSafely(1, true, generation)) {
                 return;
             }
-            this.transition({
-                type: 'playback-degraded',
-                generation,
-            });
+            this.transition('playback-degraded', generation);
             if (!this.isCurrentGeneration(generation)) {
                 return;
             }
-            this.diagnostics.emit({
-                scope: 'continuity',
-                code: 'stall-detected',
-                level: 'info',
-                generation,
-            });
+            this.emitDiagnostic('stall-detected', 'info', generation);
             this.scheduleRecovery('stall', 0, generation);
             return;
         }
         if (metrics.liveEdgeDistanceSeconds > this.policy.maxPlausibleLiveEdgeSeconds) {
             this.hardLatencySamples = 0;
             this.applyPlaybackRateSafely(1, false, generation);
-            this.diagnostics.emit({
-                scope: 'continuity',
-                code: 'implausible-live-edge',
-                level: 'warn',
-                generation,
-            });
+            this.emitDiagnostic('implausible-live-edge', 'warn', generation);
             return;
         }
         if (metrics.liveEdgeDistanceSeconds >= this.policy.hardResyncThresholdSeconds) {
-            this.hardLatencySamples = Math.min(this.hardLatencySamples + 1, DefaultContinuityController.HARD_LATENCY_CONFIRMATION_SAMPLES);
-            if (this.hardLatencySamples < DefaultContinuityController.HARD_LATENCY_CONFIRMATION_SAMPLES) {
-                if (metrics.bufferedAheadSeconds >= DefaultContinuityController.MIN_CATCHUP_BUFFER_SECONDS) {
-                    if (!this.applyPlaybackRateSafely(this.policy.catchupRate, false, generation)) {
-                        return;
-                    }
+            this.hardLatencySamples += 1;
+            if (this.hardLatencySamples < HARD_LATENCY_CONFIRMATION_SAMPLES) {
+                if (metrics.bufferedAheadSeconds >= MIN_CATCHUP_BUFFER_SECONDS) {
+                    this.applyPlaybackRateSafely(this.policy.catchupRate, false, generation);
                 }
                 else {
-                    if (!this.applyPlaybackRateSafely(1, true, generation)) {
-                        return;
-                    }
+                    this.applyPlaybackRateSafely(1, true, generation);
                 }
                 return;
             }
@@ -780,24 +666,17 @@ class DefaultContinuityController {
             if (!this.applyPlaybackRateSafely(1, true, generation)) {
                 return;
             }
-            this.transition({
-                type: 'playback-degraded',
-                generation,
-            });
+            this.transition('playback-degraded', generation);
             this.scheduleRecovery('latency', 0, generation);
             return;
         }
-        if (metrics.bufferedAheadSeconds < DefaultContinuityController.MIN_CATCHUP_BUFFER_SECONDS) {
-            this.hardLatencySamples = 0;
-            if (!this.applyPlaybackRateSafely(1, true, generation)) {
-                return;
-            }
+        this.hardLatencySamples = 0;
+        if (metrics.bufferedAheadSeconds < MIN_CATCHUP_BUFFER_SECONDS) {
+            this.applyPlaybackRateSafely(1, true, generation);
             return;
         }
-        this.hardLatencySamples = 0;
-        if (metrics.liveEdgeDistanceSeconds >= catchupBoundary &&
-            metrics.liveEdgeDistanceSeconds < this.policy.hardResyncThresholdSeconds &&
-            metrics.bufferedAheadSeconds > 0) {
+        const catchupBoundary = this.policy.targetLatencySeconds + this.policy.softCatchupThresholdSeconds;
+        if (metrics.liveEdgeDistanceSeconds >= catchupBoundary) {
             this.applyPlaybackRateSafely(this.policy.catchupRate, false, generation);
             return;
         }
@@ -811,16 +690,8 @@ class DefaultContinuityController {
             this.applyPlaybackRate(1, true);
         }
         catch {
-            this.transition({
-                type: 'playback-degraded',
-                generation,
-            });
-            this.diagnostics.emit({
-                scope: 'continuity',
-                code: 'playback-rate-update-failed',
-                level: 'warn',
-                generation,
-            });
+            this.transition('playback-degraded', generation);
+            this.emitDiagnostic('playback-rate-update-failed', 'warn', generation);
             this.scheduleRecovery('playback-error', 0, generation);
             throw new LiveFlowError('playback-rate-update-failed', 'The player rejected a playback-rate update.');
         }
@@ -835,19 +706,11 @@ class DefaultContinuityController {
                 return false;
             }
             this.cancelMonitoring();
-            this.transition({
-                type: 'playback-degraded',
-                generation,
-            });
+            this.transition('playback-degraded', generation);
             if (!this.isCurrentGeneration(generation)) {
                 return false;
             }
-            this.diagnostics.emit({
-                scope: 'continuity',
-                code: 'playback-rate-update-failed',
-                level: 'warn',
-                generation,
-            });
+            this.emitDiagnostic('playback-rate-update-failed', 'warn', generation);
             this.scheduleRecovery('playback-error', 0, generation);
             return false;
         }
@@ -858,7 +721,7 @@ class DefaultContinuityController {
         }
         if (this.lastPlaybackRateChangeAt !== null && !immediate) {
             const elapsed = this.clock.now() - this.lastPlaybackRateChangeAt;
-            if (elapsed < DefaultContinuityController.RATE_CHANGE_COOLDOWN_MS) {
+            if (elapsed < RATE_CHANGE_COOLDOWN_MS) {
                 return;
             }
         }
@@ -866,15 +729,9 @@ class DefaultContinuityController {
         this.adapter.setPlaybackRate(rate);
         this.appliedPlaybackRate = rate;
         this.lastPlaybackRateChangeAt = this.clock.now();
-        this.diagnostics.emit({
-            scope: 'continuity',
-            code: rate > 1 ? 'catchup-started' : 'catchup-stopped',
-            level: 'info',
-            generation: this.machine.generation,
-            detail: {
-                previousRate,
-                rate,
-            },
+        this.emitDiagnostic(rate > 1 ? 'catchup-started' : 'catchup-stopped', 'info', this.machine.generation, {
+            previousRate,
+            rate,
         });
     }
     scheduleRecovery(reason, delayMs, generation) {
@@ -894,7 +751,7 @@ class DefaultContinuityController {
                 return;
             }
             if (seekResult === 'seeked') {
-                this.scheduleRecovery(pendingReason, DefaultContinuityController.STALL_DEBOUNCE_MS, generation);
+                this.scheduleRecovery(pendingReason, STALL_DEBOUNCE_MS, generation);
                 return;
             }
             this.requestRecovery(pendingReason, generation);
@@ -913,14 +770,9 @@ class DefaultContinuityController {
             if (!this.isCurrentGeneration(generation)) {
                 return 'recovered';
             }
-            this.diagnostics.emit({
-                scope: 'continuity',
-                code: error instanceof InvalidPlaybackMetricsError
-                    ? 'invalid-playback-metrics'
-                    : 'metrics-sample-failed',
-                level: 'warn',
-                generation,
-            });
+            this.emitDiagnostic(error instanceof InvalidPlaybackMetricsError
+                ? 'invalid-playback-metrics'
+                : 'metrics-sample-failed', 'warn', generation);
             return 'failed';
         }
         if (!this.isCurrentGeneration(generation)) {
@@ -929,7 +781,7 @@ class DefaultContinuityController {
         if (reason === 'latency' &&
             metrics.liveEdgeDistanceSeconds < this.policy.hardResyncThresholdSeconds) {
             this.hardLatencySamples = 0;
-            this.transition({ type: 'playback-resumed', generation });
+            this.transition('playback-resumed', generation);
             if (this.isCurrentGeneration(generation) && this.machine.state === 'playing') {
                 this.scheduleMonitoring();
                 return 'recovered';
@@ -968,15 +820,9 @@ class DefaultContinuityController {
         if (!this.isCurrentGeneration(generation)) {
             return true;
         }
-        this.diagnostics.emit({
-            scope: 'continuity',
-            code: 'stall-seek',
-            level: 'info',
-            generation,
-            detail: {
-                attempt: this.stallSeeks,
-                stranded: typeof gap === 'number',
-            },
+        this.emitDiagnostic('stall-seek', 'info', generation, {
+            attempt: this.stallSeeks,
+            stranded: typeof gap === 'number',
         });
         return true;
     }
@@ -991,21 +837,12 @@ class DefaultContinuityController {
             return;
         }
         if (this.machine.automaticRecoveryCount >= this.policy.maxAutomaticRecoveries) {
-            if (!this.transition({
-                type: 'recovery-exhausted',
-                generation,
-            }) ||
+            if (!this.transition('recovery-exhausted', generation) ||
                 !this.isCurrentGeneration(generation)) {
                 return;
             }
-            this.diagnostics.emit({
-                scope: 'continuity',
-                code: 'recovery-exhausted',
-                level: 'warn',
-                generation,
-                detail: {
-                    attempts: this.machine.automaticRecoveryCount,
-                },
+            this.emitDiagnostic('recovery-exhausted', 'warn', generation, {
+                attempts: this.machine.automaticRecoveryCount,
             });
             return;
         }
@@ -1017,10 +854,7 @@ class DefaultContinuityController {
             }
         }
         const countBeforeRequest = this.machine.automaticRecoveryCount;
-        if (!this.transition({
-            type: 'recovery-requested',
-            generation,
-        }) ||
+        if (!this.transition('recovery-requested', generation) ||
             !this.isCurrentGeneration(generation) ||
             this.machine.state !== 'recovering') {
             return;
@@ -1028,33 +862,19 @@ class DefaultContinuityController {
         this.lastRecoveryAt = now;
         this.lastRecoveryGeneration = generation;
         const counted = this.machine.automaticRecoveryCount > countBeforeRequest;
-        this.diagnostics.emit({
-            scope: 'continuity',
-            code: 'recovery-requested',
-            level: 'info',
-            generation,
-            detail: {
-                attempt: this.machine.automaticRecoveryCount,
-                reason,
-            },
+        this.emitDiagnostic('recovery-requested', 'info', generation, {
+            attempt: this.machine.automaticRecoveryCount,
+            reason,
         });
         if (!this.isCurrentGeneration(generation) || this.machine.state !== 'recovering') {
             return;
         }
         if (this.onRecoveryRequest === undefined) {
-            this.transition({
-                type: 'recovery-exhausted',
-                generation,
-            });
+            this.transition('recovery-exhausted', generation);
             if (!this.isCurrentGeneration(generation)) {
                 return;
             }
-            this.diagnostics.emit({
-                scope: 'continuity',
-                code: 'recovery-listener-missing',
-                level: 'warn',
-                generation,
-            });
+            this.emitDiagnostic('recovery-listener-missing', 'warn', generation);
             return;
         }
         if (counted) {
@@ -1074,16 +894,8 @@ class DefaultContinuityController {
             if (!this.isCurrentGeneration(generation)) {
                 return;
             }
-            this.transition({
-                type: 'recovery-exhausted',
-                generation,
-            });
-            this.diagnostics.emit({
-                scope: 'continuity',
-                code: 'recovery-listener-failed',
-                level: 'warn',
-                generation,
-            });
+            this.transition('recovery-exhausted', generation);
+            this.emitDiagnostic('recovery-listener-failed', 'warn', generation);
             return;
         }
     }
@@ -1115,10 +927,7 @@ class DefaultContinuityController {
             else if (this.machine.state !== 'resolving' && this.machine.state !== 'warming') {
                 return;
             }
-            this.transition({
-                type: 'playback-degraded',
-                generation,
-            });
+            this.transition('playback-degraded', generation);
             this.requestRecovery('source-timeout', generation);
         }, this.policy.sourceWarmupTimeoutMs);
     }

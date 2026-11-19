@@ -1,4 +1,4 @@
-import { createSystemClock } from '../shared/clock.js';
+import { createSystemTimerClock } from '../shared/clock.js';
 import { CONTRACT_VERSION } from '../shared/contract.js';
 import { createDiagnosticEmitter } from '../shared/diagnostic-emitter.js';
 import { ContractVersionMismatchError } from '../shared/errors.js';
@@ -15,7 +15,7 @@ class RealtimeOverlayEngine {
     options;
     limits;
     clock;
-    diagnostic;
+    emitDiagnostic;
     defaultRenderer;
     renderers = new Map();
     ownedRenderers = new Set();
@@ -44,8 +44,8 @@ class RealtimeOverlayEngine {
     constructor(options) {
         this.options = options;
         this.limits = resolveOverlayLimits(options.limits);
-        this.clock = options.clock ?? createSystemClock();
-        this.diagnostic = createDiagnosticEmitter(options, this.clock);
+        this.clock = options.clock ?? createSystemTimerClock();
+        this.emitDiagnostic = createDiagnosticEmitter('overlay', options, this.clock);
         validateInstanceId(options.instanceId, this.limits.maxKeyLength);
         this.instanceState = options.instanceState ?? DEFAULT_OVERLAY_INSTANCE_STATE;
         validateInstanceState(this.instanceState);
@@ -100,12 +100,12 @@ class RealtimeOverlayEngine {
         }
         if (this.dedupe.size >= this.limits.maxDedupeEntries) {
             this.counters.dropped += 1;
-            this.emitDiagnostic('overlay-event-dropped', 'warn', { reason: 'dedupe-capacity' });
+            this.emitDiagnostic('overlay-event-dropped', 'warn', undefined, { reason: 'dedupe-capacity' });
             return { status: 'dropped' };
         }
         if (!this.enqueue(event)) {
             this.counters.dropped += 1;
-            this.emitDiagnostic('overlay-event-dropped', 'warn', { reason: 'queue-overload' });
+            this.emitDiagnostic('overlay-event-dropped', 'warn', undefined, { reason: 'queue-overload' });
             return { status: 'dropped' };
         }
         this.dedupe.set(dedupeKey, { event, phase: 'pending' });
@@ -237,7 +237,7 @@ class RealtimeOverlayEngine {
         this.pending.pop();
         this.removePendingDedupe(lowest);
         this.counters.dropped += 1;
-        this.emitDiagnostic('overlay-event-dropped', 'warn', { reason: 'priority-eviction' });
+        this.emitDiagnostic('overlay-event-dropped', 'warn', undefined, { reason: 'priority-eviction' });
         this.pending.push(event);
         this.sortPending();
         return true;
@@ -475,7 +475,7 @@ class RealtimeOverlayEngine {
             card.renderHandle.destroy();
             card.renderHandle = null;
             card.renderHandle = card.renderer.render(card.event, presentation);
-            this.emitDiagnostic('overlay-presentation-changed', 'debug', { presentation });
+            this.emitDiagnostic('overlay-presentation-changed', 'debug', undefined, { presentation });
         }
         catch {
             this.finishCard(cardId);
@@ -655,14 +655,6 @@ class RealtimeOverlayEngine {
         }
         catch {
             return;
-        }
-    }
-    emitDiagnostic(code, level, detail) {
-        if (detail === undefined) {
-            this.diagnostic.emit({ scope: 'overlay', code, level });
-        }
-        else {
-            this.diagnostic.emit({ scope: 'overlay', code, level, detail });
         }
     }
     ensureAlive() {

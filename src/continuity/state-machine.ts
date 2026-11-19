@@ -7,17 +7,17 @@ export interface ContinuityMachineState {
 }
 
 export type ContinuityMachineEvent =
-  | { readonly type: 'source-requested'; readonly generation: number }
-  | { readonly type: 'source-prepared'; readonly generation: number }
-  | { readonly type: 'first-frame'; readonly generation: number }
-  | { readonly type: 'playback-degraded'; readonly generation: number }
-  | { readonly type: 'playback-resumed'; readonly generation: number }
-  | { readonly type: 'recovery-requested'; readonly generation: number }
-  | { readonly type: 'recovery-cancelled'; readonly generation: number }
-  | { readonly type: 'recovery-exhausted'; readonly generation: number }
-  | { readonly type: 'source-failed'; readonly generation: number }
-  | { readonly type: 'playback-suspended'; readonly generation: number }
-  | { readonly type: 'destroyed' }
+  | 'source-requested'
+  | 'source-prepared'
+  | 'first-frame'
+  | 'playback-degraded'
+  | 'playback-resumed'
+  | 'recovery-requested'
+  | 'recovery-cancelled'
+  | 'recovery-exhausted'
+  | 'source-failed'
+  | 'playback-suspended'
+  | 'destroyed'
 
 export const INITIAL_CONTINUITY_STATE: ContinuityMachineState = {
   state: 'idle',
@@ -28,35 +28,36 @@ export const INITIAL_CONTINUITY_STATE: ContinuityMachineState = {
 export function reduceContinuityState(
   current: ContinuityMachineState,
   event: ContinuityMachineEvent,
+  generation: number,
 ): ContinuityMachineState {
   if (current.state === 'stopped') {
     return current
   }
 
-  if (event.type === 'destroyed') {
+  if (event === 'destroyed') {
     return {
       ...current,
       state: 'stopped',
     }
   }
 
-  if (event.type === 'source-requested') {
-    if (event.generation <= current.generation) {
+  if (event === 'source-requested') {
+    if (generation <= current.generation) {
       return current
     }
 
     return {
       state: 'resolving',
-      generation: event.generation,
+      generation,
       automaticRecoveryCount: current.automaticRecoveryCount,
     }
   }
 
-  if (event.generation !== current.generation) {
+  if (generation !== current.generation) {
     return current
   }
 
-  switch (event.type) {
+  switch (event) {
     case 'source-prepared':
       if (current.state !== 'resolving') {
         return current
