@@ -47,11 +47,11 @@ try {
 
 /** @param {string[]} args @param {string} cwd @returns {Promise<void>} */
 async function runPnpm(args, cwd) {
-  if (pnpmCli === undefined) {
-    await run(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', args, cwd)
+  if (pnpmCli !== undefined && /\.[cm]?js$/iu.test(pnpmCli)) {
+    await run(process.execPath, [pnpmCli, ...args], cwd)
     return
   }
-  await run(process.execPath, [pnpmCli, ...args], cwd)
+  await run(pnpmCli ?? (process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'), args, cwd)
 }
 
 /** @param {string} command @param {string[]} args @param {string} cwd @returns {Promise<void>} */
