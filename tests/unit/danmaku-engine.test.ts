@@ -458,6 +458,30 @@ describe('danmaku engine', () => {
     expect(engine.getMetrics().metadataDiscarded).toBe(1)
   })
 
+  it.each(['汉字', '😀👍🏽', 'a"\\\n\u0001', '\ud800x', '߿ࠀ￿'])(
+    'counts metadata %j as its serialized UTF-8 bytes',
+    (value) => {
+      const bytes = new TextEncoder().encode(JSON.stringify({ a: value })).byteLength
+      const kept = (maxMetadataBytes: number): boolean => {
+        const clock = new FakeClock()
+        const renderer = new RecordingRenderer()
+        const engine = createDanmakuEngine({
+          contractVersion: CONTRACT_VERSION,
+          clock,
+          renderer,
+          viewport: { width: 640, height: 64 },
+          limits: { maxMetadataBytes },
+        })
+        engine.push({ ...message('bytes'), metadata: { entries: [['a', value]] } })
+        clock.advanceBy(16)
+        return renderer.frames.at(-1)?.mounts[0]?.message.metadata !== undefined
+      }
+
+      expect(kept(bytes)).toBe(true)
+      expect(kept(bytes - 1)).toBe(false)
+    },
+  )
+
   it('enforces a bounded one-second input window', () => {
     const clock = new FakeClock()
     const engine = createDanmakuEngine({

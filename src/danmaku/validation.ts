@@ -65,9 +65,8 @@ interface RequiredDanmakuMessageFields {
 }
 
 interface MetadataBudget {
-  keys: number
-  bytes: number
-  readonly encoder: TextEncoder
+  remainingKeys: number
+  remainingBytes: number
 }
 
 export function resolveLimits(input: Partial<DanmakuLimits> | undefined): DanmakuLimits {
@@ -285,7 +284,10 @@ function copyMetadata(
   try {
     const metadata = input.metadata
     if (metadata === undefined) return
-    const budget: MetadataBudget = { keys: 0, bytes: 0, encoder: new TextEncoder() }
+    const budget: MetadataBudget = {
+      remainingKeys: limits.maxMetadataKeys,
+      remainingBytes: limits.maxMetadataBytes,
+    }
     result.message.metadata = copyMetadataObject(metadata, 0, budget, limits)
   } catch {
     result.metadataDiscarded = true
@@ -298,35 +300,27 @@ function copyMetadataValue(
   budget: MetadataBudget,
   limits: DanmakuLimits,
 ): DanmakuMetadataValue {
-  if (value === null) {
-    consumeMetadataBytes(4, budget, limits)
-    return value
-  }
   if (typeof value === 'string') {
-    consumeMetadataString(value, budget, limits)
+    consumeMetadataString(value, budget)
     return value
   }
-  if (typeof value === 'boolean') {
-    consumeMetadataBytes(value ? 4 : 5, budget, limits)
-    return value
-  }
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    consumeMetadataBytes(String(value).length, budget, limits)
+  if (
+    value === null ||
+    typeof value === 'boolean' ||
+    (typeof value === 'number' && Number.isFinite(value))
+  ) {
+    consumeMetadataBytes(String(value).length, budget)
     return value
   }
   if (depth >= limits.maxMetadataDepth) {
-    throw new Error('metadata depth')
+    rejectMetadata()
   }
   if (Array.isArray(value)) {
     const items: readonly unknown[] = value
     const itemCount = items.length
-    reserveMetadataKeys(itemCount, budget, limits)
+    reserveMetadataEntries(itemCount, budget)
     const result: DanmakuMetadataValue[] = []
-    consumeMetadataBytes(2, budget, limits)
     for (let index = 0; index < itemCount; index += 1) {
-      if (index > 0) {
-        consumeMetadataBytes(1, budget, limits)
-      }
       result.push(copyMetadataValue(items[index], depth + 1, budget, limits))
     }
     return result
@@ -341,60 +335,63 @@ function copyMetadataObject(
   limits: DanmakuLimits,
 ): DanmakuMetadata {
   if (!isPlainRecord(value)) {
-    throw new Error('metadata value')
+    rejectMetadata()
   }
   const unknownEntries: unknown = value.entries
   if (!Array.isArray(unknownEntries)) {
-    throw new Error('metadata value')
+    rejectMetadata()
   }
   const entries: readonly unknown[] = unknownEntries
   const entryCount = entries.length
-  reserveMetadataKeys(entryCount, budget, limits)
+  reserveMetadataEntries(entryCount, budget)
+  consumeMetadataBytes(entryCount, budget)
   const result: DanmakuMetadataEntry[] = []
-  consumeMetadataBytes(2, budget, limits)
   for (let index = 0; index < entryCount; index += 1) {
     const entry: unknown = entries[index]
     if (!Array.isArray(entry) || entry.length !== 2) {
-      throw new Error('metadata entry')
+      rejectMetadata()
     }
     const key: unknown = entry[0]
     if (typeof key !== 'string') {
-      throw new Error('metadata key')
+      rejectMetadata()
     }
-    if (index > 0) {
-      consumeMetadataBytes(1, budget, limits)
-    }
-    consumeMetadataString(key, budget, limits)
-    consumeMetadataBytes(1, budget, limits)
+    consumeMetadataString(key, budget)
     result.push([key, copyMetadataValue(entry[1], depth + 1, budget, limits)])
   }
   return { entries: result }
 }
 
-function reserveMetadataKeys(count: number, budget: MetadataBudget, limits: DanmakuLimits): void {
-  if (!Number.isSafeInteger(count) || count < 0 || count > limits.maxMetadataKeys - budget.keys) {
-    throw new Error('metadata keys')
+function reserveMetadataEntries(count: number, budget: MetadataBudget): void {
+  if (!Number.isSafeInteger(count) || count < 0 || count > budget.remainingKeys) {
+    rejectMetadata()
   }
-  budget.keys += count
+  budget.remainingKeys -= count
+  consumeMetadataBytes(2 + Math.max(0, count - 1), budget)
 }
 
-function consumeMetadataString(value: string, budget: MetadataBudget, limits: DanmakuLimits): void {
-  const remaining = limits.maxMetadataBytes - budget.bytes
-  if (value.length + 2 > remaining) {
-    throw new Error('metadata bytes')
-  }
+function consumeMetadataString(value: string, budget: MetadataBudget): void {
+  consumeMetadataBytes(value.length + 2, budget)
   const serialized = JSON.stringify(value)
-  if (serialized === undefined) {
-    throw new Error('metadata value')
+  let extraBytes = serialized.length - value.length - 2
+  const firstMultibyte = serialized.search(/[\u0080-\uffff]/)
+  if (firstMultibyte >= 0) {
+    for (let index = firstMultibyte; index < serialized.length; index += 1) {
+      const unit = serialized.charCodeAt(index)
+      if (unit > 0x7f) {
+        extraBytes += unit < 0x800 || (unit >= 0xd800 && unit <= 0xdfff) ? 1 : 2
+      }
+    }
   }
-  consumeMetadataBytes(budget.encoder.encode(serialized).byteLength, budget, limits)
+  consumeMetadataBytes(extraBytes, budget)
 }
 
-function consumeMetadataBytes(bytes: number, budget: MetadataBudget, limits: DanmakuLimits): void {
-  if (bytes > limits.maxMetadataBytes - budget.bytes) {
-    throw new Error('metadata bytes')
-  }
-  budget.bytes += bytes
+function rejectMetadata(): never {
+  throw new InvalidDanmakuMessageError('metadata')
+}
+
+function consumeMetadataBytes(bytes: number, budget: MetadataBudget): void {
+  budget.remainingBytes -= bytes
+  if (budget.remainingBytes < 0) rejectMetadata()
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

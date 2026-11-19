@@ -213,7 +213,10 @@ function copyMetadata(input, result, limits) {
         const metadata = input.metadata;
         if (metadata === undefined)
             return;
-        const budget = { keys: 0, bytes: 0, encoder: new TextEncoder() };
+        const budget = {
+            remainingKeys: limits.maxMetadataKeys,
+            remainingBytes: limits.maxMetadataBytes,
+        };
         result.message.metadata = copyMetadataObject(metadata, 0, budget, limits);
     }
     catch {
@@ -221,35 +224,25 @@ function copyMetadata(input, result, limits) {
     }
 }
 function copyMetadataValue(value, depth, budget, limits) {
-    if (value === null) {
-        consumeMetadataBytes(4, budget, limits);
-        return value;
-    }
     if (typeof value === 'string') {
-        consumeMetadataString(value, budget, limits);
+        consumeMetadataString(value, budget);
         return value;
     }
-    if (typeof value === 'boolean') {
-        consumeMetadataBytes(value ? 4 : 5, budget, limits);
-        return value;
-    }
-    if (typeof value === 'number' && Number.isFinite(value)) {
-        consumeMetadataBytes(String(value).length, budget, limits);
+    if (value === null ||
+        typeof value === 'boolean' ||
+        (typeof value === 'number' && Number.isFinite(value))) {
+        consumeMetadataBytes(String(value).length, budget);
         return value;
     }
     if (depth >= limits.maxMetadataDepth) {
-        throw new Error('metadata depth');
+        rejectMetadata();
     }
     if (Array.isArray(value)) {
         const items = value;
         const itemCount = items.length;
-        reserveMetadataKeys(itemCount, budget, limits);
+        reserveMetadataEntries(itemCount, budget);
         const result = [];
-        consumeMetadataBytes(2, budget, limits);
         for (let index = 0; index < itemCount; index += 1) {
-            if (index > 0) {
-                consumeMetadataBytes(1, budget, limits);
-            }
             result.push(copyMetadataValue(items[index], depth + 1, budget, limits));
         }
         return result;
@@ -258,57 +251,60 @@ function copyMetadataValue(value, depth, budget, limits) {
 }
 function copyMetadataObject(value, depth, budget, limits) {
     if (!isPlainRecord(value)) {
-        throw new Error('metadata value');
+        rejectMetadata();
     }
     const unknownEntries = value.entries;
     if (!Array.isArray(unknownEntries)) {
-        throw new Error('metadata value');
+        rejectMetadata();
     }
     const entries = unknownEntries;
     const entryCount = entries.length;
-    reserveMetadataKeys(entryCount, budget, limits);
+    reserveMetadataEntries(entryCount, budget);
+    consumeMetadataBytes(entryCount, budget);
     const result = [];
-    consumeMetadataBytes(2, budget, limits);
     for (let index = 0; index < entryCount; index += 1) {
         const entry = entries[index];
         if (!Array.isArray(entry) || entry.length !== 2) {
-            throw new Error('metadata entry');
+            rejectMetadata();
         }
         const key = entry[0];
         if (typeof key !== 'string') {
-            throw new Error('metadata key');
+            rejectMetadata();
         }
-        if (index > 0) {
-            consumeMetadataBytes(1, budget, limits);
-        }
-        consumeMetadataString(key, budget, limits);
-        consumeMetadataBytes(1, budget, limits);
+        consumeMetadataString(key, budget);
         result.push([key, copyMetadataValue(entry[1], depth + 1, budget, limits)]);
     }
     return { entries: result };
 }
-function reserveMetadataKeys(count, budget, limits) {
-    if (!Number.isSafeInteger(count) || count < 0 || count > limits.maxMetadataKeys - budget.keys) {
-        throw new Error('metadata keys');
+function reserveMetadataEntries(count, budget) {
+    if (!Number.isSafeInteger(count) || count < 0 || count > budget.remainingKeys) {
+        rejectMetadata();
     }
-    budget.keys += count;
+    budget.remainingKeys -= count;
+    consumeMetadataBytes(2 + Math.max(0, count - 1), budget);
 }
-function consumeMetadataString(value, budget, limits) {
-    const remaining = limits.maxMetadataBytes - budget.bytes;
-    if (value.length + 2 > remaining) {
-        throw new Error('metadata bytes');
-    }
+function consumeMetadataString(value, budget) {
+    consumeMetadataBytes(value.length + 2, budget);
     const serialized = JSON.stringify(value);
-    if (serialized === undefined) {
-        throw new Error('metadata value');
+    let extraBytes = serialized.length - value.length - 2;
+    const firstMultibyte = serialized.search(/[\u0080-\uffff]/);
+    if (firstMultibyte >= 0) {
+        for (let index = firstMultibyte; index < serialized.length; index += 1) {
+            const unit = serialized.charCodeAt(index);
+            if (unit > 0x7f) {
+                extraBytes += unit < 0x800 || (unit >= 0xd800 && unit <= 0xdfff) ? 1 : 2;
+            }
+        }
     }
-    consumeMetadataBytes(budget.encoder.encode(serialized).byteLength, budget, limits);
+    consumeMetadataBytes(extraBytes, budget);
 }
-function consumeMetadataBytes(bytes, budget, limits) {
-    if (bytes > limits.maxMetadataBytes - budget.bytes) {
-        throw new Error('metadata bytes');
-    }
-    budget.bytes += bytes;
+function rejectMetadata() {
+    throw new InvalidDanmakuMessageError('metadata');
+}
+function consumeMetadataBytes(bytes, budget) {
+    budget.remainingBytes -= bytes;
+    if (budget.remainingBytes < 0)
+        rejectMetadata();
 }
 function isRecord(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
