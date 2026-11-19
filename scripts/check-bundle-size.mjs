@@ -19,6 +19,11 @@ const targets = [
     maxGzipBytes: 4 * 1024,
   },
   {
+    label: './danmaku/inline-images',
+    path: './dist/danmaku/inline-images.js',
+    maxGzipBytes: 2 * 1024,
+  },
+  {
     label: './overlay',
     path: './dist/overlay/index.js',
     maxGzipBytes: 8 * 1024,

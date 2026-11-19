@@ -39,6 +39,10 @@
       "types": "./dist/danmaku/renderers/index.d.ts",
       "import": "./dist/danmaku/renderers/index.js"
     },
+    "./danmaku/inline-images": {
+      "types": "./dist/danmaku/inline-images.d.ts",
+      "import": "./dist/danmaku/inline-images.js"
+    },
     "./overlay": {
       "types": "./dist/overlay/index.d.ts",
       "import": "./dist/overlay/index.js"

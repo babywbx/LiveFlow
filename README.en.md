@@ -225,22 +225,23 @@ overlay.submit({
 Every engine and adapter is a separate ESM subpath. The root entry exports only the shared contract
 and never statically pulls in an engine or a player runtime.
 
-| Subpath                            | Provides                                             |    gzip | Budget |
-| ---------------------------------- | ---------------------------------------------------- | ------: | -----: |
-| `@babywbx/liveflow`                | `CONTRACT_VERSION`, shared types, typed errors       |       — |      — |
-| `@babywbx/liveflow/continuity`     | Continuity controller and player adapter contract    | 5.6 KiB |  6 KiB |
-| `@babywbx/liveflow/danmaku`        | Bounded danmaku scheduler                            | 6.7 KiB |  7 KiB |
-| `@babywbx/liveflow/danmaku/dom`    | Safe structured DOM renderer and color helpers       | 3.3 KiB |  4 KiB |
-| `@babywbx/liveflow/overlay`        | Realtime event engine and shared budget coordinator  | 6.0 KiB |  8 KiB |
-| `@babywbx/liveflow/overlay/banner` | Event banner presenter (optional)                    | 4.3 KiB |  5 KiB |
-| `@babywbx/liveflow/chrome`         | Player chrome visibility controller                  | 1.5 KiB |  2 KiB |
-| `@babywbx/liveflow/multiview`      | Multiview grid layout math and grid track contract   | 0.9 KiB |  2 KiB |
-| `@babywbx/liveflow/native-video`   | Native `<video>` adapter                             | 3.6 KiB |  4 KiB |
-| `@babywbx/liveflow/page-activity`  | Page visibility source for suspended playback        | 0.5 KiB |  2 KiB |
-| `@babywbx/liveflow/artplayer`      | ArtPlayer-like seam with no static player dependency | 3.5 KiB |  4 KiB |
-| `@babywbx/liveflow/dplayer`        | DPlayer-like seam with no static player dependency   | 3.5 KiB |  4 KiB |
-| `@babywbx/liveflow/videojs`        | Video.js-like seam with no static player dependency  | 3.7 KiB |  4 KiB |
-| `@babywbx/liveflow/xgplayer`       | XGPlayer-like seam with no static player dependency  | 3.5 KiB |  4 KiB |
+| Subpath                                   | Provides                                                            |    gzip | Budget |
+| ----------------------------------------- | ------------------------------------------------------------------- | ------: | -----: |
+| `@babywbx/liveflow`                       | `CONTRACT_VERSION`, shared types, typed errors                      |       — |      — |
+| `@babywbx/liveflow/continuity`            | Continuity controller and player adapter contract                   | 5.6 KiB |  6 KiB |
+| `@babywbx/liveflow/danmaku`               | Bounded danmaku scheduler                                           | 6.7 KiB |  7 KiB |
+| `@babywbx/liveflow/danmaku/dom`           | Safe structured DOM renderer and color helpers                      | 3.3 KiB |  4 KiB |
+| `@babywbx/liveflow/danmaku/inline-images` | Inline images in danmaku text (emotes, animations, emoji; optional) | 1.1 KiB |  2 KiB |
+| `@babywbx/liveflow/overlay`               | Realtime event engine and shared budget coordinator                 | 6.0 KiB |  8 KiB |
+| `@babywbx/liveflow/overlay/banner`        | Event banner presenter (optional)                                   | 4.3 KiB |  5 KiB |
+| `@babywbx/liveflow/chrome`                | Player chrome visibility controller                                 | 1.5 KiB |  2 KiB |
+| `@babywbx/liveflow/multiview`             | Multiview grid layout math and grid track contract                  | 0.9 KiB |  2 KiB |
+| `@babywbx/liveflow/native-video`          | Native `<video>` adapter                                            | 3.6 KiB |  4 KiB |
+| `@babywbx/liveflow/page-activity`         | Page visibility source for suspended playback                       | 0.5 KiB |  2 KiB |
+| `@babywbx/liveflow/artplayer`             | ArtPlayer-like seam with no static player dependency                | 3.5 KiB |  4 KiB |
+| `@babywbx/liveflow/dplayer`               | DPlayer-like seam with no static player dependency                  | 3.5 KiB |  4 KiB |
+| `@babywbx/liveflow/videojs`               | Video.js-like seam with no static player dependency                 | 3.7 KiB |  4 KiB |
+| `@babywbx/liveflow/xgplayer`              | XGPlayer-like seam with no static player dependency                 | 3.5 KiB |  4 KiB |
 
 Measured minified and gzipped by `pnpm size:check`, which fails CI on any regression past the
 budget column. The four core subpaths combined measure 19,977 bytes (19.5 KiB) against a 20 KiB ceiling.
@@ -532,8 +533,11 @@ The entry also exports `normalizeHexColor()`, `contrastRatio()`, and
 `backgroundColor` and fall back to `fallbackTextColor` below a 4.5 ratio. Images resolve exclusively
 through `assetResolver.resolve(assetKey)` and only relative or absolute HTTP, HTTPS, and Blob URLs
 are accepted. Without an explicit `reducedMotion` value the renderer honours
-`(prefers-reduced-motion: reduce)` by pinning messages in their lane. Reference:
-[DOM renderer](./docs/reference/danmaku-dom.md), [Custom identities](./docs/how-to/custom-identity.md).
+`(prefers-reduced-motion: reduce)` by pinning messages in their lane. A `textRenderer` can take over
+how the body text is written; the optional `@babywbx/liveflow/danmaku/inline-images` entry uses it to
+turn emote codes, stickers, animations, or emoji into font-scaled images that measurement and
+collision avoidance account for. Reference: [DOM renderer](./docs/reference/danmaku-dom.md),
+[Inline images](./docs/reference/danmaku-inline-images.md), [Custom identities](./docs/how-to/custom-identity.md).
 
 ### Realtime overlay — `@babywbx/liveflow/overlay`
 
@@ -806,6 +810,7 @@ It is written in Chinese; API names and code samples are language-independent.
 | [Continuity](./docs/reference/continuity.md)               | [Generation gating](./docs/explanation/generation-gating.md)         |
 | [Danmaku](./docs/reference/danmaku.md)                     | [Bounded realtime](./docs/explanation/bounded-realtime.md)           |
 | [DOM renderer](./docs/reference/danmaku-dom.md)            | [Structured identities](./docs/explanation/structured-identities.md) |
+| [Inline images](./docs/reference/danmaku-inline-images.md) |                                                                      |
 | [Overlay](./docs/reference/overlay.md)                     |                                                                      |
 | [Event banner presenter](./docs/reference/event-banner.md) |                                                                      |
 | [Multiview](./docs/reference/multiview.md)                 |                                                                      |

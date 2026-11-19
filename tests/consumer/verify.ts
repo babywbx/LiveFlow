@@ -2,6 +2,7 @@ import { CONTRACT_VERSION, ContractVersionMismatchError, LiveFlowError } from '@
 import { createContinuityController, DEFAULT_CONTINUITY_POLICY } from '@babywbx/liveflow/continuity'
 import { createDanmakuEngine } from '@babywbx/liveflow/danmaku'
 import { createDomDanmakuRenderer } from '@babywbx/liveflow/danmaku/dom'
+import { createInlineImageRenderer } from '@babywbx/liveflow/danmaku/inline-images'
 import { createOverlayBudgetCoordinator, createOverlayEngine } from '@babywbx/liveflow/overlay'
 import { createEventBannerPresenter } from '@babywbx/liveflow/overlay/banner'
 import { createChromeVisibility } from '@babywbx/liveflow/chrome'
@@ -21,6 +22,7 @@ void [
   DEFAULT_CONTINUITY_POLICY,
   createDanmakuEngine,
   createDomDanmakuRenderer,
+  createInlineImageRenderer,
   createOverlayBudgetCoordinator,
   createOverlayEngine,
   createEventBannerPresenter,

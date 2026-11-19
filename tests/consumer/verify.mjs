@@ -4,6 +4,7 @@ import { CONTRACT_VERSION, ContractVersionMismatchError, LiveFlowError } from '@
 import { createContinuityController, DEFAULT_CONTINUITY_POLICY } from '@babywbx/liveflow/continuity'
 import { createDanmakuEngine } from '@babywbx/liveflow/danmaku'
 import { createDomDanmakuRenderer } from '@babywbx/liveflow/danmaku/dom'
+import { createInlineImageRenderer } from '@babywbx/liveflow/danmaku/inline-images'
 import { createOverlayBudgetCoordinator, createOverlayEngine } from '@babywbx/liveflow/overlay'
 import { createEventBannerPresenter } from '@babywbx/liveflow/overlay/banner'
 import { createChromeVisibility } from '@babywbx/liveflow/chrome'
@@ -20,6 +21,7 @@ const subpaths = [
   `${packageName}/continuity`,
   `${packageName}/danmaku`,
   `${packageName}/danmaku/dom`,
+  `${packageName}/danmaku/inline-images`,
   `${packageName}/overlay`,
   `${packageName}/overlay/banner`,
   `${packageName}/chrome`,
@@ -78,6 +80,7 @@ if (typeof createContinuityController !== 'function') {
 for (const [name, factory] of [
   ['createDanmakuEngine', createDanmakuEngine],
   ['createDomDanmakuRenderer', createDomDanmakuRenderer],
+  ['createInlineImageRenderer', createInlineImageRenderer],
   ['createOverlayEngine', createOverlayEngine],
   ['createOverlayBudgetCoordinator', createOverlayBudgetCoordinator],
   ['createEventBannerPresenter', createEventBannerPresenter],

@@ -220,22 +220,23 @@ overlay.submit({
 
 每个引擎和 adapter 都是独立 ESM 子路径。根入口只导出共享契约，绝不静态加载引擎或播放器运行时。
 
-| 子路径                             | 内容                                     |    gzip |  预算 |
-| ---------------------------------- | ---------------------------------------- | ------: | ----: |
-| `@babywbx/liveflow`                | `CONTRACT_VERSION`、共享类型与类型化错误 |       — |     — |
-| `@babywbx/liveflow/continuity`     | 连续性控制器与播放器 adapter 契约        | 5.6 KiB | 6 KiB |
-| `@babywbx/liveflow/danmaku`        | 有界弹幕调度核心                         | 6.7 KiB | 7 KiB |
-| `@babywbx/liveflow/danmaku/dom`    | 安全结构化 DOM renderer 与颜色工具       | 3.3 KiB | 4 KiB |
-| `@babywbx/liveflow/overlay`        | 实时事件引擎与共享预算协调器             | 6.0 KiB | 8 KiB |
-| `@babywbx/liveflow/overlay/banner` | 事件横幅呈现器（可选，按需加载）         | 4.3 KiB | 5 KiB |
-| `@babywbx/liveflow/chrome`         | 播放器控件显隐控制器（空闲隐藏与常驻）   | 1.5 KiB | 2 KiB |
-| `@babywbx/liveflow/multiview`      | 多路宫格布局数学与网格轨道声明           | 0.9 KiB | 2 KiB |
-| `@babywbx/liveflow/native-video`   | 原生 `<video>` adapter                   | 3.6 KiB | 4 KiB |
-| `@babywbx/liveflow/page-activity`  | 页面可见性来源（省电暂停续播）           | 0.5 KiB | 2 KiB |
-| `@babywbx/liveflow/artplayer`      | 零静态播放器依赖的 ArtPlayer-like seam   | 3.5 KiB | 4 KiB |
-| `@babywbx/liveflow/dplayer`        | 零静态播放器依赖的 DPlayer-like seam     | 3.5 KiB | 4 KiB |
-| `@babywbx/liveflow/videojs`        | 零静态播放器依赖的 Video.js-like seam    | 3.7 KiB | 4 KiB |
-| `@babywbx/liveflow/xgplayer`       | 零静态播放器依赖的 XGPlayer-like seam    | 3.5 KiB | 4 KiB |
+| 子路径                                    | 内容                                        |    gzip |  预算 |
+| ----------------------------------------- | ------------------------------------------- | ------: | ----: |
+| `@babywbx/liveflow`                       | `CONTRACT_VERSION`、共享类型与类型化错误    |       — |     — |
+| `@babywbx/liveflow/continuity`            | 连续性控制器与播放器 adapter 契约           | 5.6 KiB | 6 KiB |
+| `@babywbx/liveflow/danmaku`               | 有界弹幕调度核心                            | 6.7 KiB | 7 KiB |
+| `@babywbx/liveflow/danmaku/dom`           | 安全结构化 DOM renderer 与颜色工具          | 3.3 KiB | 4 KiB |
+| `@babywbx/liveflow/danmaku/inline-images` | 弹幕行内图片（表情、动图、emoji，按需加载） | 1.1 KiB | 2 KiB |
+| `@babywbx/liveflow/overlay`               | 实时事件引擎与共享预算协调器                | 6.0 KiB | 8 KiB |
+| `@babywbx/liveflow/overlay/banner`        | 事件横幅呈现器（可选，按需加载）            | 4.3 KiB | 5 KiB |
+| `@babywbx/liveflow/chrome`                | 播放器控件显隐控制器（空闲隐藏与常驻）      | 1.5 KiB | 2 KiB |
+| `@babywbx/liveflow/multiview`             | 多路宫格布局数学与网格轨道声明              | 0.9 KiB | 2 KiB |
+| `@babywbx/liveflow/native-video`          | 原生 `<video>` adapter                      | 3.6 KiB | 4 KiB |
+| `@babywbx/liveflow/page-activity`         | 页面可见性来源（省电暂停续播）              | 0.5 KiB | 2 KiB |
+| `@babywbx/liveflow/artplayer`             | 零静态播放器依赖的 ArtPlayer-like seam      | 3.5 KiB | 4 KiB |
+| `@babywbx/liveflow/dplayer`               | 零静态播放器依赖的 DPlayer-like seam        | 3.5 KiB | 4 KiB |
+| `@babywbx/liveflow/videojs`               | 零静态播放器依赖的 Video.js-like seam       | 3.7 KiB | 4 KiB |
+| `@babywbx/liveflow/xgplayer`              | 零静态播放器依赖的 XGPlayer-like seam       | 3.5 KiB | 4 KiB |
 
 体积由 `pnpm size:check` 压缩后 gzip 实测，超过预算列即 CI 失败。四个核心子路径合并实测
 19,977 字节（19.5 KiB），上限为 20 KiB。
@@ -508,7 +509,9 @@ import { createDomDanmakuRenderer } from '@babywbx/liveflow/danmaku/dom'
 相对亮度公式与传入的 `backgroundColor` 计算对比度，低于 4.5 时回退到 `fallbackTextColor`。图片
 只能由 `assetResolver.resolve(assetKey)` 提供，且只接受相对或绝对的 HTTP、HTTPS 与 Blob URL。未
 显式传入 `reducedMotion` 时，渲染器监听 `(prefers-reduced-motion: reduce)`，开启后消息固定在轨道
-中央。参考：[DOM 弹幕渲染器](./docs/reference/danmaku-dom.md)、
+中央。传入 `textRenderer` 可以接管正文的写入；按需加载的 `@babywbx/liveflow/danmaku/inline-images`
+用它把表情码、贴纸、动图或 emoji 换成按字号缩放的图片，测量与碰撞都把图片算进去。参考：
+[DOM 弹幕渲染器](./docs/reference/danmaku-dom.md)、[行内图片](./docs/reference/danmaku-inline-images.md)、
 [自定义身份渲染](./docs/how-to/custom-identity.md)。
 
 ### 实时叠加层 —— `@babywbx/liveflow/overlay`
@@ -764,19 +767,20 @@ const tracks = multiviewGridTracks(spec) // { gridTemplateColumns, gridTemplateR
 |                                                               | [处理被浏览器拒绝的播放](./docs/how-to/handle-suspended-playback.md) |
 |                                                               | [在画面角落显示列表式弹幕](./docs/how-to/stack-layout.md)            |
 
-| 参考                                                | 说明                                                       |
-| --------------------------------------------------- | ---------------------------------------------------------- |
-| [共享契约](./docs/reference/shared.md)              | [架构与边界](./docs/explanation/architecture.md)           |
-| [Continuity API](./docs/reference/continuity.md)    | [Generation 门禁](./docs/explanation/generation-gating.md) |
-| [弹幕调度](./docs/reference/danmaku.md)             | [有界实时性](./docs/explanation/bounded-realtime.md)       |
-| [DOM 弹幕渲染器](./docs/reference/danmaku-dom.md)   | [结构化身份](./docs/explanation/structured-identities.md)  |
-| [Realtime Overlay API](./docs/reference/overlay.md) |                                                            |
-| [事件横幅呈现器](./docs/reference/event-banner.md)  |                                                            |
-| [多路宫格布局](./docs/reference/multiview.md)       |                                                            |
-| [播放器控件显隐](./docs/reference/chrome.md)        |                                                            |
-| [播放器适配器](./docs/reference/adapters.md)        |                                                            |
-| [指标与诊断码](./docs/reference/diagnostics.md)     |                                                            |
-| [错误类型](./docs/reference/errors.md)              |                                                            |
+| 参考                                                  | 说明                                                       |
+| ----------------------------------------------------- | ---------------------------------------------------------- |
+| [共享契约](./docs/reference/shared.md)                | [架构与边界](./docs/explanation/architecture.md)           |
+| [Continuity API](./docs/reference/continuity.md)      | [Generation 门禁](./docs/explanation/generation-gating.md) |
+| [弹幕调度](./docs/reference/danmaku.md)               | [有界实时性](./docs/explanation/bounded-realtime.md)       |
+| [DOM 弹幕渲染器](./docs/reference/danmaku-dom.md)     | [结构化身份](./docs/explanation/structured-identities.md)  |
+| [行内图片](./docs/reference/danmaku-inline-images.md) |                                                            |
+| [Realtime Overlay API](./docs/reference/overlay.md)   |                                                            |
+| [事件横幅呈现器](./docs/reference/event-banner.md)    |                                                            |
+| [多路宫格布局](./docs/reference/multiview.md)         |                                                            |
+| [播放器控件显隐](./docs/reference/chrome.md)          |                                                            |
+| [播放器适配器](./docs/reference/adapters.md)          |                                                            |
+| [指标与诊断码](./docs/reference/diagnostics.md)       |                                                            |
+| [错误类型](./docs/reference/errors.md)                |                                                            |
 
 <div align="right">
 

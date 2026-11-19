@@ -39,6 +39,7 @@ const renderer = createDomDanmakuRenderer({
   .liveflow-danmaku__sender
   .liveflow-danmaku__delimiter
   .liveflow-danmaku__text
+    .liveflow-danmaku__image（仅在使用行内图片时出现）
 ```
 
 身份、昵称、分隔符和正文不会拼成 HTML。默认情况下所有上游文本只赋给 `textContent`。默认身份节点
@@ -110,6 +111,8 @@ const renderer = createDomDanmakuRenderer({
 
 `render()` 抛错时，渲染器抛出 `phase` 为 `text-render` 的 `DanmakuRendererError`。正文节点随
 消息一起回收，不需要单独清理。
+
+内置实现见[行内图片](./danmaku-inline-images.md)：把表情码、贴纸、动图或 emoji 换成图片。
 
 ## Reduced motion
 
