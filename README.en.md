@@ -536,7 +536,8 @@ are accepted. Without an explicit `reducedMotion` value the renderer honours
 `(prefers-reduced-motion: reduce)` by pinning messages in their lane. A `textRenderer` can take over
 how the body text is written; the optional `@babywbx/liveflow/danmaku/inline-images` entry uses it to
 turn emote codes, stickers, animations, or emoji into font-scaled images that measurement and
-collision avoidance account for. Reference: [DOM renderer](./docs/reference/danmaku-dom.md),
+collision avoidance account for, spaced by their visible edges and never taller than the line.
+Reference: [DOM renderer](./docs/reference/danmaku-dom.md),
 [Inline images](./docs/reference/danmaku-inline-images.md), [Custom identities](./docs/how-to/custom-identity.md).
 
 ### Realtime overlay — `@babywbx/liveflow/overlay`

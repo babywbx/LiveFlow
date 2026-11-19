@@ -510,7 +510,8 @@ import { createDomDanmakuRenderer } from '@babywbx/liveflow/danmaku/dom'
 只能由 `assetResolver.resolve(assetKey)` 提供，且只接受相对或绝对的 HTTP、HTTPS 与 Blob URL。未
 显式传入 `reducedMotion` 时，渲染器监听 `(prefers-reduced-motion: reduce)`，开启后消息固定在轨道
 中央。传入 `textRenderer` 可以接管正文的写入；按需加载的 `@babywbx/liveflow/danmaku/inline-images`
-用它把表情码、贴纸、动图或 emoji 换成按字号缩放的图片，测量与碰撞都把图片算进去。参考：
+用它把表情码、贴纸、动图或 emoji 换成按字号缩放的图片，测量与碰撞都把图片算进去，左右间距按图片的
+透明边收紧，图片也不会撑高行。参考：
 [DOM 弹幕渲染器](./docs/reference/danmaku-dom.md)、[行内图片](./docs/reference/danmaku-inline-images.md)、
 [自定义身份渲染](./docs/how-to/custom-identity.md)。
 
