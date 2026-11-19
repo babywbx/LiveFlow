@@ -388,6 +388,53 @@ describe('realtime overlay', () => {
     expect(overlay.getMetrics().deduped).toBe(1)
   })
 
+  it('expires displayed keys in display order while preserving pending keys', () => {
+    const clock = new FakeClock()
+    const overlay = createOverlayEngine({
+      contractVersion: CONTRACT_VERSION,
+      instanceId: 'primary',
+      clock,
+      defaultRenderer: new RecordingRenderer(),
+      limits: { dedupeWindowMs: 1_000, maxDedupeEntries: 3 },
+    })
+    expect(overlay.submit(event('first', 1)).status).toBe('displayed')
+    expect(overlay.submit(event('last', 1)).status).toBe('queued')
+    expect(overlay.submit(event('second', 2)).status).toBe('queued')
+
+    clock.advanceBy(1_000)
+    expect(overlay.submit(event('first', 1)).status).toBe('deduped')
+    clock.advanceBy(1)
+    expect(overlay.submit(event('last', 1)).status).toBe('deduped')
+    expect(overlay.submit(event('second', 1)).status).toBe('deduped')
+    expect(overlay.submit(event('first', 3)).status).toBe('queued')
+    clock.advanceBy(1_000)
+    expect(overlay.submit(event('second', 1)).status).toBe('queued')
+    overlay.destroy()
+  })
+
+  it('publishes eviction only after reserving the replacement key and queue slot', () => {
+    const clock = new FakeClock()
+    let reentrantStatus: string | undefined
+    const overlay = createOverlayEngine({
+      contractVersion: CONTRACT_VERSION,
+      instanceId: 'primary',
+      clock,
+      defaultRenderer: new RecordingRenderer(),
+      limits: { maxPending: 1 },
+      onDiagnostic(diagnostic): void {
+        if (diagnostic.detail?.reason === 'priority-eviction') {
+          reentrantStatus = overlay.submit(event('replacement', 2)).status
+        }
+      },
+    })
+    overlay.submit(event('first', 1))
+    overlay.submit(event('queued', 1))
+    expect(overlay.submit(event('replacement', 2)).status).toBe('queued')
+    expect(reentrantStatus).toBe('deduped')
+    expect(overlay.getMetrics().pendingDepth).toBe(1)
+    overlay.destroy()
+  })
+
   it('expires historical events instead of replaying the backlog', () => {
     const clock = new FakeClock()
     clock.advanceBy(5_000)

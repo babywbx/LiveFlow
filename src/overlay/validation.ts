@@ -125,7 +125,7 @@ function parseOverlayEventValue(
     throw new InvalidOverlayEventError('durationMs')
   }
 
-  const rawNodes = Reflect.get(candidate, 'nodes')
+  const rawNodes = candidate.nodes
   if (!Array.isArray(rawNodes)) {
     throw new InvalidOverlayEventError('nodes')
   }
@@ -138,7 +138,7 @@ function parseOverlayEventValue(
     nodes.push(parseNode(rawNodes[index], index, limits))
   }
 
-  const dedupeCandidate = Reflect.get(candidate, 'dedupeKey')
+  const dedupeCandidate = candidate.dedupeKey
   if (dedupeCandidate === undefined) {
     return { id, kind, receivedAt, priority, durationMs, nodes }
   }
@@ -153,7 +153,7 @@ function parseNode(candidate: unknown, index: number, limits: OverlayLimits): Ov
   if (!isRecord(candidate)) {
     throw new InvalidOverlayEventError(`nodes.${String(index)}`)
   }
-  const type = Reflect.get(candidate, 'type')
+  const type = candidate.type
   if (type === 'text') {
     return {
       type,
@@ -180,7 +180,7 @@ function parseNode(candidate: unknown, index: number, limits: OverlayLimits): Ov
   if (type === 'identity') {
     return {
       type,
-      identity: parseIdentity(Reflect.get(candidate, 'identity'), index, limits),
+      identity: parseIdentity(candidate.identity, index, limits),
     }
   }
   throw new InvalidOverlayEventError(`nodes.${String(index)}.type`)
@@ -192,9 +192,9 @@ function parseIdentity(candidate: unknown, index: number, limits: OverlayLimits)
   }
   const kind = boundedEventText(candidate, 'kind', limits.maxKeyLength)
   const label = boundedEventText(candidate, 'label', limits.maxLabelLength)
-  const levelCandidate = Reflect.get(candidate, 'level')
-  const variantCandidate = Reflect.get(candidate, 'variant')
-  const assetKeyCandidate = Reflect.get(candidate, 'assetKey')
+  const levelCandidate = candidate.level
+  const variantCandidate = candidate.variant
+  const assetKeyCandidate = candidate.assetKey
 
   if (
     levelCandidate !== undefined &&
@@ -239,7 +239,7 @@ function boundedEventText(
   field: string,
   maxLength: number,
 ): string {
-  const value = Reflect.get(record, field)
+  const value = record[field]
   if (typeof value !== 'string') {
     throw new InvalidOverlayEventError(field)
   }
@@ -252,7 +252,7 @@ function validateEventText(value: string, field: string, maxLength: number): voi
 }
 
 function finiteNumber(record: Readonly<Record<PropertyKey, unknown>>, field: string): number {
-  const value = Reflect.get(record, field)
+  const value = record[field]
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     throw new InvalidOverlayEventError(field)
   }

@@ -22,7 +22,8 @@ class RealtimeOverlayEngine {
     pending = [];
     active = new Map();
     cleanupCards = new Map();
-    dedupe = new Map();
+    pendingKeys = new Set();
+    displayedAt = new Map();
     counters = {
         received: 0,
         accepted: 0,
@@ -93,26 +94,27 @@ class RealtimeOverlayEngine {
             return { status: 'expired' };
         }
         const dedupeKey = this.dedupeKey(event);
-        if (this.dedupe.has(dedupeKey)) {
+        if (this.pendingKeys.has(dedupeKey) || this.displayedAt.has(dedupeKey)) {
             this.counters.deduped += 1;
             this.emitDiagnostic('overlay-event-deduped', 'debug');
             return { status: 'deduped' };
         }
-        if (this.dedupe.size >= this.limits.maxDedupeEntries) {
+        if (this.pendingKeys.size + this.displayedAt.size >= this.limits.maxDedupeEntries) {
             this.counters.dropped += 1;
             this.emitDiagnostic('overlay-event-dropped', 'warn', undefined, { reason: 'dedupe-capacity' });
             return { status: 'dropped' };
         }
-        if (!this.enqueue(event)) {
+        if (!this.enqueue(event, dedupeKey)) {
             this.counters.dropped += 1;
             this.emitDiagnostic('overlay-event-dropped', 'warn', undefined, { reason: 'queue-overload' });
             return { status: 'dropped' };
         }
-        this.dedupe.set(dedupeKey, { event, phase: 'pending' });
         this.counters.accepted += 1;
         this.drain();
-        if ([...this.active.values()].some((card) => card.event === event)) {
-            return { status: 'displayed' };
+        for (const card of this.active.values()) {
+            if (card.event === event) {
+                return { status: 'displayed' };
+            }
         }
         if (this.pending.includes(event)) {
             return { status: 'queued' };
@@ -193,7 +195,8 @@ class RealtimeOverlayEngine {
             }
         }
         this.pending.length = 0;
-        this.dedupe.clear();
+        this.pendingKeys.clear();
+        this.displayedAt.clear();
         this.renderers.clear();
         if (this.active.size === 0 && this.cleanupCards.size === 0 && !this.draining) {
             for (const renderer of [...this.ownedRenderers]) {
@@ -224,25 +227,16 @@ class RealtimeOverlayEngine {
             throw error;
         }
     }
-    enqueue(event) {
-        if (this.pending.length < this.limits.maxPending) {
-            this.pending.push(event);
-            this.sortPending();
-            return true;
+    enqueue(event, key) {
+        const lowest = this.pending.length >= this.limits.maxPending ? this.pending.at(-1) : undefined;
+        if (lowest !== undefined) {
+            if (event.priority <= lowest.priority) {
+                return false;
+            }
+            this.pending.pop();
+            this.pendingKeys.delete(this.dedupeKey(lowest));
         }
-        const lowest = this.pending.at(-1);
-        if (lowest === undefined || event.priority <= lowest.priority) {
-            return false;
-        }
-        this.pending.pop();
-        this.removePendingDedupe(lowest);
-        this.counters.dropped += 1;
-        this.emitDiagnostic('overlay-event-dropped', 'warn', undefined, { reason: 'priority-eviction' });
         this.pending.push(event);
-        this.sortPending();
-        return true;
-    }
-    sortPending() {
         this.pending.sort((left, right) => {
             if (left.priority !== right.priority) {
                 return left.priority < right.priority ? 1 : -1;
@@ -252,6 +246,14 @@ class RealtimeOverlayEngine {
             }
             return left.id.localeCompare(right.id);
         });
+        this.pendingKeys.add(key);
+        if (lowest !== undefined) {
+            this.counters.dropped += 1;
+            this.emitDiagnostic('overlay-event-dropped', 'warn', undefined, {
+                reason: 'priority-eviction',
+            });
+        }
+        return true;
     }
     drain() {
         if (this.draining || this.destroyed) {
@@ -277,12 +279,13 @@ class RealtimeOverlayEngine {
                 if (event === undefined) {
                     break;
                 }
+                const key = this.dedupeKey(event);
                 const now = this.now();
                 if (this.destroyed) {
                     return;
                 }
                 if (now - event.receivedAt > this.limits.maxEventLifetimeMs) {
-                    this.removePendingDedupe(event);
+                    this.pendingKeys.delete(key);
                     this.counters.expired += 1;
                     this.emitDiagnostic('overlay-event-expired', 'info');
                     continue;
@@ -295,7 +298,7 @@ class RealtimeOverlayEngine {
                     if (this.destroyed) {
                         return;
                     }
-                    this.removePendingDedupe(event);
+                    this.pendingKeys.delete(key);
                     this.counters.dropped += 1;
                     this.reportError(new OverlaySchedulingError());
                     continue;
@@ -313,7 +316,7 @@ class RealtimeOverlayEngine {
                     if (this.destroyed) {
                         return;
                     }
-                    this.removePendingDedupe(event);
+                    this.pendingKeys.delete(key);
                     this.counters.dropped += 1;
                     this.reportError(new OverlaySchedulingError());
                     continue;
@@ -324,7 +327,7 @@ class RealtimeOverlayEngine {
                 }
                 if (!isOverlayPresentation(presentationCandidate)) {
                     this.cleanupDetachedCard(event, this.defaultRenderer, null, null, grant);
-                    this.removePendingDedupe(event);
+                    this.pendingKeys.delete(key);
                     this.counters.dropped += 1;
                     this.reportError(new OverlaySchedulingError());
                     continue;
@@ -332,7 +335,7 @@ class RealtimeOverlayEngine {
                 const presentation = presentationCandidate;
                 if (presentation === 'suppressed') {
                     this.cleanupDetachedCard(event, this.defaultRenderer, null, null, grant);
-                    this.removePendingDedupe(event);
+                    this.pendingKeys.delete(key);
                     this.counters.budgetDenied += 1;
                     this.counters.dropped += 1;
                     this.emitDiagnostic('overlay-budget-suppressed', 'info');
@@ -348,7 +351,7 @@ class RealtimeOverlayEngine {
                     if (this.destroyed) {
                         return;
                     }
-                    this.removePendingDedupe(event);
+                    this.pendingKeys.delete(key);
                     this.counters.dropped += 1;
                     this.counters.renderFailed += 1;
                     this.reportError(new OverlayRenderError(event.kind));
@@ -375,7 +378,7 @@ class RealtimeOverlayEngine {
                     if (this.destroyed) {
                         return;
                     }
-                    this.removePendingDedupe(event);
+                    this.pendingKeys.delete(key);
                     this.counters.dropped += 1;
                     this.reportError(new OverlaySchedulingError());
                     continue;
@@ -395,7 +398,8 @@ class RealtimeOverlayEngine {
                     closing: false,
                 };
                 this.active.set(cardId, card);
-                this.markDisplayed(event, now);
+                this.pendingKeys.delete(key);
+                this.displayedAt.set(key, now);
                 this.counters.displayed += 1;
                 if (presentation === 'full') {
                     this.counters.fullDisplayed += 1;
@@ -604,29 +608,18 @@ class RealtimeOverlayEngine {
             const event = this.pending[index];
             if (event !== undefined && now - event.receivedAt > this.limits.maxEventLifetimeMs) {
                 this.pending.splice(index, 1);
-                this.removePendingDedupe(event);
+                this.pendingKeys.delete(this.dedupeKey(event));
                 this.counters.expired += 1;
                 this.emitDiagnostic('overlay-event-expired', 'info');
             }
         }
     }
     expireDedupe(now) {
-        for (const [key, entry] of this.dedupe) {
-            if (entry.phase === 'displayed' &&
-                entry.displayedAt !== undefined &&
-                now - entry.displayedAt > this.limits.dedupeWindowMs) {
-                this.dedupe.delete(key);
+        for (const [key, displayedAt] of this.displayedAt) {
+            if (now - displayedAt <= this.limits.dedupeWindowMs) {
+                break;
             }
-        }
-    }
-    markDisplayed(event, displayedAt) {
-        this.dedupe.set(this.dedupeKey(event), { event, phase: 'displayed', displayedAt });
-    }
-    removePendingDedupe(event) {
-        const key = this.dedupeKey(event);
-        const entry = this.dedupe.get(key);
-        if (entry?.phase === 'pending' && entry.event === event) {
-            this.dedupe.delete(key);
+            this.displayedAt.delete(key);
         }
     }
     dedupeKey(event) {

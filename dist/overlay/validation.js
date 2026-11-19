@@ -94,7 +94,7 @@ function parseOverlayEventValue(candidate, limits, now) {
     if (durationMs <= 0 || durationMs > limits.maxEventLifetimeMs) {
         throw new InvalidOverlayEventError('durationMs');
     }
-    const rawNodes = Reflect.get(candidate, 'nodes');
+    const rawNodes = candidate.nodes;
     if (!Array.isArray(rawNodes)) {
         throw new InvalidOverlayEventError('nodes');
     }
@@ -106,7 +106,7 @@ function parseOverlayEventValue(candidate, limits, now) {
     for (let index = 0; index < nodeCount; index += 1) {
         nodes.push(parseNode(rawNodes[index], index, limits));
     }
-    const dedupeCandidate = Reflect.get(candidate, 'dedupeKey');
+    const dedupeCandidate = candidate.dedupeKey;
     if (dedupeCandidate === undefined) {
         return { id, kind, receivedAt, priority, durationMs, nodes };
     }
@@ -120,7 +120,7 @@ function parseNode(candidate, index, limits) {
     if (!isRecord(candidate)) {
         throw new InvalidOverlayEventError(`nodes.${String(index)}`);
     }
-    const type = Reflect.get(candidate, 'type');
+    const type = candidate.type;
     if (type === 'text') {
         return {
             type,
@@ -147,7 +147,7 @@ function parseNode(candidate, index, limits) {
     if (type === 'identity') {
         return {
             type,
-            identity: parseIdentity(Reflect.get(candidate, 'identity'), index, limits),
+            identity: parseIdentity(candidate.identity, index, limits),
         };
     }
     throw new InvalidOverlayEventError(`nodes.${String(index)}.type`);
@@ -158,9 +158,9 @@ function parseIdentity(candidate, index, limits) {
     }
     const kind = boundedEventText(candidate, 'kind', limits.maxKeyLength);
     const label = boundedEventText(candidate, 'label', limits.maxLabelLength);
-    const levelCandidate = Reflect.get(candidate, 'level');
-    const variantCandidate = Reflect.get(candidate, 'variant');
-    const assetKeyCandidate = Reflect.get(candidate, 'assetKey');
+    const levelCandidate = candidate.level;
+    const variantCandidate = candidate.variant;
+    const assetKeyCandidate = candidate.assetKey;
     if (levelCandidate !== undefined &&
         (typeof levelCandidate !== 'number' ||
             !Number.isSafeInteger(levelCandidate) ||
@@ -188,7 +188,7 @@ function parseIdentity(candidate, index, limits) {
     return identity;
 }
 function boundedEventText(record, field, maxLength) {
-    const value = Reflect.get(record, field);
+    const value = record[field];
     if (typeof value !== 'string') {
         throw new InvalidOverlayEventError(field);
     }
@@ -199,7 +199,7 @@ function validateEventText(value, field, maxLength) {
     validateBoundedText(value, field, maxLength, InvalidOverlayEventError);
 }
 function finiteNumber(record, field) {
-    const value = Reflect.get(record, field);
+    const value = record[field];
     if (typeof value !== 'number' || !Number.isFinite(value)) {
         throw new InvalidOverlayEventError(field);
     }

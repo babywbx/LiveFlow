@@ -35,12 +35,6 @@ import {
   validateRendererKind,
 } from './validation.js'
 
-interface DedupeEntry {
-  readonly event: RealtimeOverlayEvent
-  readonly phase: 'pending' | 'displayed'
-  readonly displayedAt?: number
-}
-
 interface ActiveCard {
   readonly id: number
   readonly event: RealtimeOverlayEvent
@@ -82,7 +76,8 @@ class RealtimeOverlayEngine implements OverlayEngine {
   private readonly pending: RealtimeOverlayEvent[] = []
   private readonly active = new Map<number, ActiveCard>()
   private readonly cleanupCards = new Map<number, ActiveCard>()
-  private readonly dedupe = new Map<string, DedupeEntry>()
+  private readonly pendingKeys = new Set<string>()
+  private readonly displayedAt = new Map<string, number>()
   private readonly counters: MutableOverlayMetrics = {
     received: 0,
     accepted: 0,
@@ -155,28 +150,29 @@ class RealtimeOverlayEngine implements OverlayEngine {
     }
 
     const dedupeKey = this.dedupeKey(event)
-    if (this.dedupe.has(dedupeKey)) {
+    if (this.pendingKeys.has(dedupeKey) || this.displayedAt.has(dedupeKey)) {
       this.counters.deduped += 1
       this.emitDiagnostic('overlay-event-deduped', 'debug')
       return { status: 'deduped' }
     }
-    if (this.dedupe.size >= this.limits.maxDedupeEntries) {
+    if (this.pendingKeys.size + this.displayedAt.size >= this.limits.maxDedupeEntries) {
       this.counters.dropped += 1
       this.emitDiagnostic('overlay-event-dropped', 'warn', undefined, { reason: 'dedupe-capacity' })
       return { status: 'dropped' }
     }
 
-    if (!this.enqueue(event)) {
+    if (!this.enqueue(event, dedupeKey)) {
       this.counters.dropped += 1
       this.emitDiagnostic('overlay-event-dropped', 'warn', undefined, { reason: 'queue-overload' })
       return { status: 'dropped' }
     }
-    this.dedupe.set(dedupeKey, { event, phase: 'pending' })
     this.counters.accepted += 1
     this.drain()
 
-    if ([...this.active.values()].some((card) => card.event === event)) {
-      return { status: 'displayed' }
+    for (const card of this.active.values()) {
+      if (card.event === event) {
+        return { status: 'displayed' }
+      }
     }
     if (this.pending.includes(event)) {
       return { status: 'queued' }
@@ -265,7 +261,8 @@ class RealtimeOverlayEngine implements OverlayEngine {
       }
     }
     this.pending.length = 0
-    this.dedupe.clear()
+    this.pendingKeys.clear()
+    this.displayedAt.clear()
 
     this.renderers.clear()
     if (this.active.size === 0 && this.cleanupCards.size === 0 && !this.draining) {
@@ -296,27 +293,16 @@ class RealtimeOverlayEngine implements OverlayEngine {
     }
   }
 
-  private enqueue(event: RealtimeOverlayEvent): boolean {
-    if (this.pending.length < this.limits.maxPending) {
-      this.pending.push(event)
-      this.sortPending()
-      return true
+  private enqueue(event: RealtimeOverlayEvent, key: string): boolean {
+    const lowest = this.pending.length >= this.limits.maxPending ? this.pending.at(-1) : undefined
+    if (lowest !== undefined) {
+      if (event.priority <= lowest.priority) {
+        return false
+      }
+      this.pending.pop()
+      this.pendingKeys.delete(this.dedupeKey(lowest))
     }
-
-    const lowest = this.pending.at(-1)
-    if (lowest === undefined || event.priority <= lowest.priority) {
-      return false
-    }
-    this.pending.pop()
-    this.removePendingDedupe(lowest)
-    this.counters.dropped += 1
-    this.emitDiagnostic('overlay-event-dropped', 'warn', undefined, { reason: 'priority-eviction' })
     this.pending.push(event)
-    this.sortPending()
-    return true
-  }
-
-  private sortPending(): void {
     this.pending.sort((left, right) => {
       if (left.priority !== right.priority) {
         return left.priority < right.priority ? 1 : -1
@@ -326,6 +312,14 @@ class RealtimeOverlayEngine implements OverlayEngine {
       }
       return left.id.localeCompare(right.id)
     })
+    this.pendingKeys.add(key)
+    if (lowest !== undefined) {
+      this.counters.dropped += 1
+      this.emitDiagnostic('overlay-event-dropped', 'warn', undefined, {
+        reason: 'priority-eviction',
+      })
+    }
+    return true
   }
 
   private drain(): void {
@@ -354,12 +348,13 @@ class RealtimeOverlayEngine implements OverlayEngine {
         if (event === undefined) {
           break
         }
+        const key = this.dedupeKey(event)
         const now = this.now()
         if (this.destroyed) {
           return
         }
         if (now - event.receivedAt > this.limits.maxEventLifetimeMs) {
-          this.removePendingDedupe(event)
+          this.pendingKeys.delete(key)
           this.counters.expired += 1
           this.emitDiagnostic('overlay-event-expired', 'info')
           continue
@@ -372,7 +367,7 @@ class RealtimeOverlayEngine implements OverlayEngine {
           if (this.destroyed) {
             return
           }
-          this.removePendingDedupe(event)
+          this.pendingKeys.delete(key)
           this.counters.dropped += 1
           this.reportError(new OverlaySchedulingError())
           continue
@@ -390,7 +385,7 @@ class RealtimeOverlayEngine implements OverlayEngine {
           if (this.destroyed) {
             return
           }
-          this.removePendingDedupe(event)
+          this.pendingKeys.delete(key)
           this.counters.dropped += 1
           this.reportError(new OverlaySchedulingError())
           continue
@@ -401,7 +396,7 @@ class RealtimeOverlayEngine implements OverlayEngine {
         }
         if (!isOverlayPresentation(presentationCandidate)) {
           this.cleanupDetachedCard(event, this.defaultRenderer, null, null, grant)
-          this.removePendingDedupe(event)
+          this.pendingKeys.delete(key)
           this.counters.dropped += 1
           this.reportError(new OverlaySchedulingError())
           continue
@@ -409,7 +404,7 @@ class RealtimeOverlayEngine implements OverlayEngine {
         const presentation = presentationCandidate
         if (presentation === 'suppressed') {
           this.cleanupDetachedCard(event, this.defaultRenderer, null, null, grant)
-          this.removePendingDedupe(event)
+          this.pendingKeys.delete(key)
           this.counters.budgetDenied += 1
           this.counters.dropped += 1
           this.emitDiagnostic('overlay-budget-suppressed', 'info')
@@ -425,7 +420,7 @@ class RealtimeOverlayEngine implements OverlayEngine {
           if (this.destroyed) {
             return
           }
-          this.removePendingDedupe(event)
+          this.pendingKeys.delete(key)
           this.counters.dropped += 1
           this.counters.renderFailed += 1
           this.reportError(new OverlayRenderError(event.kind))
@@ -452,7 +447,7 @@ class RealtimeOverlayEngine implements OverlayEngine {
           if (this.destroyed) {
             return
           }
-          this.removePendingDedupe(event)
+          this.pendingKeys.delete(key)
           this.counters.dropped += 1
           this.reportError(new OverlaySchedulingError())
           continue
@@ -472,7 +467,8 @@ class RealtimeOverlayEngine implements OverlayEngine {
           closing: false,
         }
         this.active.set(cardId, card)
-        this.markDisplayed(event, now)
+        this.pendingKeys.delete(key)
+        this.displayedAt.set(key, now)
         this.counters.displayed += 1
         if (presentation === 'full') {
           this.counters.fullDisplayed += 1
@@ -686,7 +682,7 @@ class RealtimeOverlayEngine implements OverlayEngine {
       const event = this.pending[index]
       if (event !== undefined && now - event.receivedAt > this.limits.maxEventLifetimeMs) {
         this.pending.splice(index, 1)
-        this.removePendingDedupe(event)
+        this.pendingKeys.delete(this.dedupeKey(event))
         this.counters.expired += 1
         this.emitDiagnostic('overlay-event-expired', 'info')
       }
@@ -694,26 +690,11 @@ class RealtimeOverlayEngine implements OverlayEngine {
   }
 
   private expireDedupe(now: number): void {
-    for (const [key, entry] of this.dedupe) {
-      if (
-        entry.phase === 'displayed' &&
-        entry.displayedAt !== undefined &&
-        now - entry.displayedAt > this.limits.dedupeWindowMs
-      ) {
-        this.dedupe.delete(key)
+    for (const [key, displayedAt] of this.displayedAt) {
+      if (now - displayedAt <= this.limits.dedupeWindowMs) {
+        break
       }
-    }
-  }
-
-  private markDisplayed(event: RealtimeOverlayEvent, displayedAt: number): void {
-    this.dedupe.set(this.dedupeKey(event), { event, phase: 'displayed', displayedAt })
-  }
-
-  private removePendingDedupe(event: RealtimeOverlayEvent): void {
-    const key = this.dedupeKey(event)
-    const entry = this.dedupe.get(key)
-    if (entry?.phase === 'pending' && entry.event === event) {
-      this.dedupe.delete(key)
+      this.displayedAt.delete(key)
     }
   }
 
