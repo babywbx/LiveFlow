@@ -9,6 +9,7 @@ import {
 import { createContinuityController } from '../../src/continuity/index.js'
 import type { PlaybackEvent } from '../../src/continuity/index.js'
 import { CONTRACT_VERSION } from '../../src/index.js'
+import { FakeClock } from '../fixtures/fake-clock.js'
 
 class SyntheticTimeRanges {
   constructor(private readonly ranges: readonly (readonly [number, number])[]) {}
@@ -285,13 +286,70 @@ describe('native video adapter', () => {
     expect(surface.mounted.has(initial)).toBe(true)
   })
 
+  it.each([
+    { initialReady: 2, activeReady: 2, emitReady: false },
+    { initialReady: 0, activeReady: 2, emitReady: true },
+    { initialReady: 2, activeReady: 0, emitReady: false },
+  ])(
+    'uses activated source readiness for blocked autoplay ($initialReady to $activeReady)',
+    async ({ initialReady, activeReady, emitReady }) => {
+      const initial = new SyntheticVideo()
+      const candidate = new SyntheticVideo()
+      candidate.readyState = initialReady
+      candidate.playFailureName = 'NotAllowedError'
+      const surface = new SyntheticSurface(initial)
+      surface.createVideo = (): VideoElementLike => candidate
+      const adapter = createNativeVideoAdapter({
+        video: initial,
+        surface,
+        binding: {
+          attach(): void {
+            candidate.readyState = activeReady
+            if (emitReady) candidate.emit('canplay')
+          },
+          detach(): void {},
+        },
+      })
+      const events: PlaybackEvent[] = []
+      adapter.subscribe((event) => {
+        events.push(event)
+      })
+      const clock = new FakeClock()
+      const recoveries: string[] = []
+      const controller = createContinuityController({
+        adapter,
+        clock,
+        contractVersion: CONTRACT_VERSION,
+        onRecoveryRequest: (request) => {
+          recoveries.push(request.reason)
+        },
+      })
+      await controller.setSource({ url: 'https://media.invalid/prebuffered', kind: 'hls' })
+      clock.advanceBy(8_000)
+
+      expect(recoveries).toEqual(activeReady === 2 ? [] : ['source-timeout'])
+      expect(events.filter((event) => event.type === 'ready')).toHaveLength(
+        activeReady === 2 ? 1 : 0,
+      )
+      expect(controller.getSnapshot().state).toBe(activeReady === 2 ? 'suspended' : 'recovering')
+      await controller.destroy()
+    },
+  )
+
   it('reports metrics from the visible video and applies media controls locally', async () => {
     const initial = new SyntheticVideo()
     initial.currentTime = 12
-    initial.buffered = new SyntheticTimeRanges([
+    const ranges = new SyntheticTimeRanges([
       [0, 15],
       [18, 24],
     ])
+    let bufferedReads = 0
+    Object.defineProperty(initial, 'buffered', {
+      get(): SyntheticTimeRanges {
+        bufferedReads += 1
+        return ranges
+      },
+    })
     const surface = new SyntheticSurface(initial)
     const adapter = createNativeVideoAdapter({
       video: initial,
@@ -313,8 +371,34 @@ describe('native video adapter', () => {
       stalledSince: null,
       droppedFrames: 7,
     })
+    expect(bufferedReads).toBe(1)
 
     await adapter.destroy()
+  })
+
+  it('skips readiness after the source binding destroys the adapter synchronously', async () => {
+    const initial = new SyntheticVideo()
+    const surface = new SyntheticSurface(initial)
+    const events: PlaybackEvent[] = []
+    const adapter = createNativeVideoAdapter({
+      video: initial,
+      surface,
+      binding: {
+        attach(): void {
+          surface.latestCreated().readyState = 2
+          void adapter.destroy()
+        },
+        detach(): void {},
+      },
+    })
+    adapter.subscribe((event) => {
+      events.push(event)
+    })
+
+    await adapter.prepare({ url: 'https://media.invalid/removed', kind: 'hls' }, 1)
+    await adapter.destroy()
+    expect(events).toEqual([])
+    expect(surface.mounted.has(surface.latestCreated())).toBe(false)
   })
 
   it('reports a gap when playback is exactly at a buffered range end', async () => {

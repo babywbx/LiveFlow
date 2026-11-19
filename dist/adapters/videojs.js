@@ -75,13 +75,8 @@ function subscribeToVideoJs(player, listener) {
         ['error', error],
         ['dispose', externallyDisposed],
     ];
-    const video = requireVideo(player);
-    const readyAtSubscription = video.readyState >= 2;
-    const unsubscribe = bindManagedEvents('videojs', 'Video.js', player, registrations);
-    if (readyAtSubscription) {
-        ready();
-    }
-    return unsubscribe;
+    requireVideo(player);
+    return bindManagedEvents('videojs', 'Video.js', player, registrations);
 }
 function isHidableHost(value) {
     if (!('hidden' in value) || typeof value.hidden !== 'boolean') {

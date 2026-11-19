@@ -101,14 +101,8 @@ function subscribeToXgPlayer(
     ['destroy', externallyDestroyed],
   ] as const
 
-  const media = requireMedia(player)
-  const readyAtSubscription = media.readyState >= 2
-  const unsubscribe = bindManagedEvents('xgplayer', 'XGPlayer', player, registrations)
-  if (readyAtSubscription) {
-    ready()
-  }
-
-  return unsubscribe
+  requireMedia(player)
+  return bindManagedEvents('xgplayer', 'XGPlayer', player, registrations)
 }
 
 function createDefaultXgPlayerSurface(initial: XgPlayerLike): XgPlayerSurface {

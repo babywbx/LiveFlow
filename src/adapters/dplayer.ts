@@ -60,8 +60,6 @@ function subscribeToDPlayer(
   player: DPlayerLike,
   listener: (event: ResourceEvent) => void,
 ): () => void {
-  const video = player.video
-  const readyAtSubscription = video.readyState >= 2
   let disposed = false
   const forward = (event: ResourceEvent): void => {
     if (!disposed) {
@@ -106,9 +104,6 @@ function subscribeToDPlayer(
   } catch (bindError) {
     disposed = true
     throw bindError
-  }
-  if (readyAtSubscription) {
-    ready()
   }
 
   return () => {

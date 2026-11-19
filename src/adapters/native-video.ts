@@ -126,7 +126,6 @@ function subscribeToVideo(
   video: VideoElementLike,
   listener: (event: ResourceEvent) => void,
 ): () => void {
-  const readyAtSubscription = video.readyState >= 2
   const ready = (): void => {
     listener({ type: 'ready' })
   }
@@ -175,9 +174,6 @@ function subscribeToVideo(
       }
     }
     throw new PlayerAdapterError('native-video-subscribe-failed', 'subscribe to video events')
-  }
-  if (readyAtSubscription) {
-    ready()
   }
 
   return () => {

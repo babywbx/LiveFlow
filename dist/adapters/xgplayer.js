@@ -60,13 +60,8 @@ function subscribeToXgPlayer(player, listener) {
         ['error', error],
         ['destroy', externallyDestroyed],
     ];
-    const media = requireMedia(player);
-    const readyAtSubscription = media.readyState >= 2;
-    const unsubscribe = bindManagedEvents('xgplayer', 'XGPlayer', player, registrations);
-    if (readyAtSubscription) {
-        ready();
-    }
-    return unsubscribe;
+    requireMedia(player);
+    return bindManagedEvents('xgplayer', 'XGPlayer', player, registrations);
 }
 function createDefaultXgPlayerSurface(initial) {
     if (initial.root === undefined || initial.root === null) {

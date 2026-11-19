@@ -65,18 +65,15 @@ export interface MediaSessionAdapterOptions extends EngineHooks {
   readonly now?: () => number
 }
 
-type PreparedToken = PreparedSource
-
 interface Session<Resource> {
   readonly generation: number
-  readonly prepared: PreparedToken
+  readonly prepared: PreparedSource
   readonly resource: Resource
   readonly unsubscribe: () => void
   stalledSince: number | null
   frameHandle: number | null
-  committed: boolean
+  ready: boolean
   unsubscribed: boolean
-  resourceReleased: boolean
   released: boolean
 }
 
@@ -91,7 +88,7 @@ export function createMediaSessionAdapter<Resource>(
   const cleanupSessions = new Set<Session<Resource>>()
   const cleanupResources = new Set<Resource>()
   const initialControls = readInitialControls()
-  let current: Session<Resource> | null = createInitialSession(driver.initialResource)
+  let current: Session<Resource> | null = createSession(driver.initialResource)
   let committed: Session<Resource> | null = null
   let destroyed = false
   let destroyPromise: Promise<void> | null = null
@@ -129,7 +126,7 @@ export function createMediaSessionAdapter<Resource>(
         pendingCreations.delete(creation)
       }
 
-      const prepared: PreparedToken = Object.freeze({ generation })
+      const prepared: PreparedSource = Object.freeze({ generation })
       if (destroyed) {
         if (!releaseOrRetainResource(resource)) {
           throw new PlayerAdapterError('media-release-failed', 'release a late media candidate')
@@ -145,35 +142,20 @@ export function createMediaSessionAdapter<Resource>(
         throw new PlayerAdapterError('duplicate-media-generation', 'prepare')
       }
 
-      let session: Session<Resource> | null = null
-      let unsubscribe: () => void
-      try {
-        unsubscribe = driver.subscribe(resource, (event) => {
-          if (session !== null) {
-            handleResourceEvent(session, event)
-          }
-        })
-      } catch {
-        releaseOrRetainResource(resource)
-        throw new PlayerAdapterError('media-subscribe-failed', 'subscribe to media events')
-      }
-      session = {
-        generation,
-        prepared,
-        resource,
-        unsubscribe,
-        stalledSince: null,
-        frameHandle: null,
-        committed: false,
-        unsubscribed: false,
-        resourceReleased: false,
-        released: false,
-      }
+      const session = createSession(resource, prepared)
       sessions.set(generation, session)
 
       try {
         applyCandidateControls(driver.video(resource))
         driver.activate(resource, source)
+        if (
+          !session.ready &&
+          !destroyed &&
+          sessions.get(generation) === session &&
+          driver.video(resource).readyState >= 2
+        ) {
+          handleResourceEvent(session, { type: 'ready' })
+        }
       } catch {
         sessions.delete(generation)
         releaseSession(session)
@@ -205,7 +187,6 @@ export function createMediaSessionAdapter<Resource>(
           )
         }
       }
-      session.committed = true
       committed = session
       const video = driver.video(session.resource)
       if (!video.paused && !video.ended) {
@@ -380,7 +361,7 @@ export function createMediaSessionAdapter<Resource>(
     },
   }
 
-  function createInitialSession(resource: Resource): Session<Resource> {
+  function createSession(resource: Resource, prepared?: PreparedSource): Session<Resource> {
     let session: Session<Resource> | null = null
     let unsubscribe: () => void
     try {
@@ -390,18 +371,21 @@ export function createMediaSessionAdapter<Resource>(
         }
       })
     } catch {
-      throw new PlayerAdapterError('media-subscribe-failed', 'subscribe to initial media events')
+      if (prepared === undefined) {
+        throw new PlayerAdapterError('media-subscribe-failed', 'subscribe to initial media events')
+      }
+      releaseOrRetainResource(resource)
+      throw new PlayerAdapterError('media-subscribe-failed', 'subscribe to media events')
     }
     session = {
-      generation: 0,
-      prepared: Object.freeze({ generation: 0 }),
+      generation: prepared?.generation ?? 0,
+      prepared: prepared ?? Object.freeze({ generation: 0 }),
       resource,
       unsubscribe,
       stalledSince: null,
       frameHandle: null,
-      committed: true,
+      ready: false,
       unsubscribed: false,
-      resourceReleased: false,
       released: false,
     }
     return session
@@ -432,6 +416,7 @@ export function createMediaSessionAdapter<Resource>(
     }
 
     if (event.type === 'ready') {
+      session.ready = true
       emit({ type: 'ready', generation: session.generation })
       return
     }
@@ -503,7 +488,6 @@ export function createMediaSessionAdapter<Resource>(
     current = session
     committed = session
     sessions.delete(session.generation)
-    session.committed = true
     releaseSession(previous)
     emit({ type: 'first-frame', generation: session.generation })
 
@@ -544,16 +528,8 @@ export function createMediaSessionAdapter<Resource>(
         emitDiagnostic('media-unsubscribe-failed', session.generation)
       }
     }
-    if (
-      session.frameHandle === null &&
-      session.unsubscribed &&
-      !session.resourceReleased &&
-      releaseResource(session.resource)
-    ) {
-      session.resourceReleased = true
-    }
     session.released =
-      session.frameHandle === null && session.unsubscribed && session.resourceReleased
+      session.frameHandle === null && session.unsubscribed && releaseResource(session.resource)
     if (session.released) {
       cleanupSessions.delete(session)
     } else {
@@ -703,16 +679,16 @@ function defaultNow(): number {
 
 function readMetrics(video: VideoElementLike, stalledSince: number | null): PlaybackMetrics {
   const currentTime = video.currentTime
+  const ranges = video.buffered
+  const rangeCount = ranges.length
   let bufferedAhead = 0
   let liveEdge = currentTime
-  let inRange = false
   let nextStart: number | null = null
 
-  for (let index = 0; index < video.buffered.length; index += 1) {
-    const start = video.buffered.start(index)
-    const end = video.buffered.end(index)
+  for (let index = 0; index < rangeCount; index += 1) {
+    const start = ranges.start(index)
+    const end = ranges.end(index)
     if (currentTime >= start && currentTime < end) {
-      inRange = true
       bufferedAhead = Math.max(bufferedAhead, end - currentTime)
     } else if (start > currentTime && (nextStart === null || start < nextStart)) {
       nextStart = start
@@ -728,6 +704,8 @@ function readMetrics(video: VideoElementLike, stalledSince: number | null): Play
     stalledSince,
     droppedFrames: video.getVideoPlaybackQuality?.().droppedVideoFrames ?? null,
   }
-  if (inRange || nextStart === null) return metrics
-  return { ...metrics, strandedGapSeconds: nextStart - currentTime }
+  if (bufferedAhead === 0 && nextStart !== null) {
+    metrics.strandedGapSeconds = nextStart - currentTime
+  }
+  return metrics
 }

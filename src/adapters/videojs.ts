@@ -121,14 +121,8 @@ function subscribeToVideoJs(
     ['dispose', externallyDisposed],
   ] as const
 
-  const video = requireVideo(player)
-  const readyAtSubscription = video.readyState >= 2
-  const unsubscribe = bindManagedEvents('videojs', 'Video.js', player, registrations)
-  if (readyAtSubscription) {
-    ready()
-  }
-
-  return unsubscribe
+  requireVideo(player)
+  return bindManagedEvents('videojs', 'Video.js', player, registrations)
 }
 
 interface HidableHostLike {

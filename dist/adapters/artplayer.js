@@ -63,54 +63,16 @@ export function createArtPlayerAdapter(options) {
         },
     };
     const adapter = createMediaSessionAdapter(driver, options);
-    return {
-        prepare(source, generation) {
-            return adapter.prepare(source, generation);
-        },
-        commit(prepared, generation) {
-            return adapter.commit(prepared, generation);
-        },
-        discard(prepared) {
-            return adapter.discard(prepared);
-        },
-        play() {
-            return adapter.play();
-        },
-        pause() {
-            adapter.pause();
-        },
-        setMuted(muted) {
-            adapter.setMuted(muted);
-        },
-        setVolume(volume) {
-            adapter.setVolume(volume);
-        },
-        setPlaybackRate(rate) {
-            adapter.setPlaybackRate(rate);
-        },
-        getMetrics() {
-            return adapter.getMetrics();
-        },
-        seek(seconds) {
-            adapter.seek?.(seconds);
-        },
-        subscribe(listener) {
-            return adapter.subscribe(listener);
-        },
-        destroy() {
-            return adapter.destroy();
-        },
+    return Object.assign(adapter, {
         getOverlayContainer() {
             return visiblePlayer?.overlayContainer ?? options.overlayContainer ?? null;
         },
-    };
+    });
     function createResource(player) {
         return { player, destroyed: false, removed: false };
     }
 }
 function subscribeToArtPlayer(player, listener) {
-    const video = player.video;
-    const readyAtSubscription = video.readyState >= 2;
     const ready = () => {
         listener({ type: 'ready' });
     };
@@ -165,9 +127,6 @@ function subscribeToArtPlayer(player, listener) {
             }
         }
         throw new PlayerAdapterError('artplayer-subscribe-failed', 'subscribe to ArtPlayer events');
-    }
-    if (readyAtSubscription) {
-        ready();
     }
     return () => {
         let cleanupFailed = false;

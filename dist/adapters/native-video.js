@@ -88,7 +88,6 @@ export function createNativeVideoAdapter(options) {
     return createMediaSessionAdapter(driver, options);
 }
 function subscribeToVideo(video, listener) {
-    const readyAtSubscription = video.readyState >= 2;
     const ready = () => {
         listener({ type: 'ready' });
     };
@@ -138,9 +137,6 @@ function subscribeToVideo(video, listener) {
             }
         }
         throw new PlayerAdapterError('native-video-subscribe-failed', 'subscribe to video events');
-    }
-    if (readyAtSubscription) {
-        ready();
     }
     return () => {
         let cleanupFailed = false;

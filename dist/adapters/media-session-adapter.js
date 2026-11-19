@@ -10,7 +10,7 @@ export function createMediaSessionAdapter(driver, options) {
     const cleanupSessions = new Set();
     const cleanupResources = new Set();
     const initialControls = readInitialControls();
-    let current = createInitialSession(driver.initialResource);
+    let current = createSession(driver.initialResource);
     let committed = null;
     let destroyed = false;
     let destroyPromise = null;
@@ -63,35 +63,17 @@ export function createMediaSessionAdapter(driver, options) {
                 releaseOrRetainResource(resource);
                 throw new PlayerAdapterError('duplicate-media-generation', 'prepare');
             }
-            let session = null;
-            let unsubscribe;
-            try {
-                unsubscribe = driver.subscribe(resource, (event) => {
-                    if (session !== null) {
-                        handleResourceEvent(session, event);
-                    }
-                });
-            }
-            catch {
-                releaseOrRetainResource(resource);
-                throw new PlayerAdapterError('media-subscribe-failed', 'subscribe to media events');
-            }
-            session = {
-                generation,
-                prepared,
-                resource,
-                unsubscribe,
-                stalledSince: null,
-                frameHandle: null,
-                committed: false,
-                unsubscribed: false,
-                resourceReleased: false,
-                released: false,
-            };
+            const session = createSession(resource, prepared);
             sessions.set(generation, session);
             try {
                 applyCandidateControls(driver.video(resource));
                 driver.activate(resource, source);
+                if (!session.ready &&
+                    !destroyed &&
+                    sessions.get(generation) === session &&
+                    driver.video(resource).readyState >= 2) {
+                    handleResourceEvent(session, { type: 'ready' });
+                }
             }
             catch {
                 sessions.delete(generation);
@@ -116,7 +98,6 @@ export function createMediaSessionAdapter(driver, options) {
                     throw new PlayerAdapterError('media-commit-cleanup-failed', 'release the replaced media candidate');
                 }
             }
-            session.committed = true;
             committed = session;
             const video = driver.video(session.resource);
             if (!video.paused && !video.ended) {
@@ -279,7 +260,7 @@ export function createMediaSessionAdapter(driver, options) {
             return flight;
         },
     };
-    function createInitialSession(resource) {
+    function createSession(resource, prepared) {
         let session = null;
         let unsubscribe;
         try {
@@ -290,18 +271,21 @@ export function createMediaSessionAdapter(driver, options) {
             });
         }
         catch {
-            throw new PlayerAdapterError('media-subscribe-failed', 'subscribe to initial media events');
+            if (prepared === undefined) {
+                throw new PlayerAdapterError('media-subscribe-failed', 'subscribe to initial media events');
+            }
+            releaseOrRetainResource(resource);
+            throw new PlayerAdapterError('media-subscribe-failed', 'subscribe to media events');
         }
         session = {
-            generation: 0,
-            prepared: Object.freeze({ generation: 0 }),
+            generation: prepared?.generation ?? 0,
+            prepared: prepared ?? Object.freeze({ generation: 0 }),
             resource,
             unsubscribe,
             stalledSince: null,
             frameHandle: null,
-            committed: true,
+            ready: false,
             unsubscribed: false,
-            resourceReleased: false,
             released: false,
         };
         return session;
@@ -329,6 +313,7 @@ export function createMediaSessionAdapter(driver, options) {
             return;
         }
         if (event.type === 'ready') {
+            session.ready = true;
             emit({ type: 'ready', generation: session.generation });
             return;
         }
@@ -394,7 +379,6 @@ export function createMediaSessionAdapter(driver, options) {
         current = session;
         committed = session;
         sessions.delete(session.generation);
-        session.committed = true;
         releaseSession(previous);
         emit({ type: 'first-frame', generation: session.generation });
         try {
@@ -435,14 +419,8 @@ export function createMediaSessionAdapter(driver, options) {
                 emitDiagnostic('media-unsubscribe-failed', session.generation);
             }
         }
-        if (session.frameHandle === null &&
-            session.unsubscribed &&
-            !session.resourceReleased &&
-            releaseResource(session.resource)) {
-            session.resourceReleased = true;
-        }
         session.released =
-            session.frameHandle === null && session.unsubscribed && session.resourceReleased;
+            session.frameHandle === null && session.unsubscribed && releaseResource(session.resource);
         if (session.released) {
             cleanupSessions.delete(session);
         }
@@ -579,15 +557,15 @@ function defaultNow() {
 }
 function readMetrics(video, stalledSince) {
     const currentTime = video.currentTime;
+    const ranges = video.buffered;
+    const rangeCount = ranges.length;
     let bufferedAhead = 0;
     let liveEdge = currentTime;
-    let inRange = false;
     let nextStart = null;
-    for (let index = 0; index < video.buffered.length; index += 1) {
-        const start = video.buffered.start(index);
-        const end = video.buffered.end(index);
+    for (let index = 0; index < rangeCount; index += 1) {
+        const start = ranges.start(index);
+        const end = ranges.end(index);
         if (currentTime >= start && currentTime < end) {
-            inRange = true;
             bufferedAhead = Math.max(bufferedAhead, end - currentTime);
         }
         else if (start > currentTime && (nextStart === null || start < nextStart)) {
@@ -603,7 +581,8 @@ function readMetrics(video, stalledSince) {
         stalledSince,
         droppedFrames: video.getVideoPlaybackQuality?.().droppedVideoFrames ?? null,
     };
-    if (inRange || nextStart === null)
-        return metrics;
-    return { ...metrics, strandedGapSeconds: nextStart - currentTime };
+    if (bufferedAhead === 0 && nextStart !== null) {
+        metrics.strandedGapSeconds = nextStart - currentTime;
+    }
+    return metrics;
 }

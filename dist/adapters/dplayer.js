@@ -22,8 +22,6 @@ export function createDPlayerAdapter(options) {
     }, options);
 }
 function subscribeToDPlayer(player, listener) {
-    const video = player.video;
-    const readyAtSubscription = video.readyState >= 2;
     let disposed = false;
     const forward = (event) => {
         if (!disposed) {
@@ -68,9 +66,6 @@ function subscribeToDPlayer(player, listener) {
     catch (bindError) {
         disposed = true;
         throw bindError;
-    }
-    if (readyAtSubscription) {
-        ready();
     }
     return () => {
         disposed = true;

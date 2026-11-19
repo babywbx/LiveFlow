@@ -133,9 +133,11 @@ class ThrowingVideoDPlayer implements DPlayerLike {
   private readonly listeners = new Map<string, Set<(...args: readonly unknown[]) => void>>()
   videoReads = 0
 
+  constructor(private readonly failOnRead: number) {}
+
   get video(): VideoElementLike {
     this.videoReads += 1
-    if (this.videoReads === 2) {
+    if (this.videoReads === this.failOnRead) {
       throw new Error('Synthetic video getter failure.')
     }
     return this.media
@@ -335,7 +337,7 @@ describe('DPlayer-like adapter', () => {
   })
 
   it('does not retain handlers when the initial video getter fails', () => {
-    const initial = new ThrowingVideoDPlayer()
+    const initial = new ThrowingVideoDPlayer(1)
 
     expect(() =>
       createDPlayerAdapter({
@@ -344,7 +346,21 @@ describe('DPlayer-like adapter', () => {
         surface: new SyntheticSurface(initial),
       }),
     ).toThrow(PlayerAdapterError)
-    expect(initial.videoReads).toBe(2)
+    expect(initial.videoReads).toBe(1)
+    expect(initial.listenerCount()).toBe(0)
+  })
+
+  it('reads the initial video once and releases handlers after a later read fails', async () => {
+    const initial = new ThrowingVideoDPlayer(2)
+    const adapter = createDPlayerAdapter({
+      player: initial,
+      createPlayer: createPlayerFactory([]),
+      surface: new SyntheticSurface(initial),
+    })
+
+    expect(initial.videoReads).toBe(1)
+    expect(() => adapter.getMetrics()).toThrow(PlayerAdapterError)
+    await adapter.destroy()
     expect(initial.listenerCount()).toBe(0)
   })
 })

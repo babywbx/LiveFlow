@@ -1,10 +1,4 @@
-import type {
-  LivePlayerAdapter,
-  LiveSource,
-  PlaybackEventListener,
-  PlaybackMetrics,
-  PreparedSource,
-} from '../continuity/types.js'
+import type { LivePlayerAdapter, LiveSource } from '../continuity/types.js'
 import type { EngineHooks } from '../shared/diagnostics.js'
 import { PlayerAdapterError } from './adapter-error.js'
 import {
@@ -131,47 +125,11 @@ export function createArtPlayerAdapter<OverlayContainer = HTMLElement>(
 
   const adapter = createMediaSessionAdapter(driver, options)
 
-  return {
-    prepare(source: LiveSource, generation: number): Promise<PreparedSource> {
-      return adapter.prepare(source, generation)
-    },
-    commit(prepared: PreparedSource, generation: number): Promise<void> {
-      return adapter.commit(prepared, generation)
-    },
-    discard(prepared: PreparedSource): Promise<void> {
-      return adapter.discard(prepared)
-    },
-    play(): Promise<void> {
-      return adapter.play()
-    },
-    pause(): void {
-      adapter.pause()
-    },
-    setMuted(muted: boolean): void {
-      adapter.setMuted(muted)
-    },
-    setVolume(volume: number): void {
-      adapter.setVolume(volume)
-    },
-    setPlaybackRate(rate: number): void {
-      adapter.setPlaybackRate(rate)
-    },
-    getMetrics(): PlaybackMetrics {
-      return adapter.getMetrics()
-    },
-    seek(seconds: number): void {
-      adapter.seek?.(seconds)
-    },
-    subscribe(listener: PlaybackEventListener): () => void {
-      return adapter.subscribe(listener)
-    },
-    destroy(): Promise<void> {
-      return adapter.destroy()
-    },
+  return Object.assign(adapter, {
     getOverlayContainer(): OverlayContainer | null {
       return visiblePlayer?.overlayContainer ?? options.overlayContainer ?? null
     },
-  }
+  })
 
   function createResource(
     player: ArtPlayerLike<OverlayContainer>,
@@ -184,8 +142,6 @@ function subscribeToArtPlayer<OverlayContainer>(
   player: ArtPlayerLike<OverlayContainer>,
   listener: (event: ResourceEvent) => void,
 ): () => void {
-  const video = player.video
-  const readyAtSubscription = video.readyState >= 2
   const ready = (): void => {
     listener({ type: 'ready' })
   }
@@ -239,9 +195,6 @@ function subscribeToArtPlayer<OverlayContainer>(
       }
     }
     throw new PlayerAdapterError('artplayer-subscribe-failed', 'subscribe to ArtPlayer events')
-  }
-  if (readyAtSubscription) {
-    ready()
   }
 
   return () => {
