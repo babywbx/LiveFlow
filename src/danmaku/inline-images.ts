@@ -23,7 +23,8 @@ export const EMOJI_PATTERN =
   /[#*0-9]\uFE0F?\u20E3|\p{Regional_Indicator}{2}|\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0F)?(?:\u200D\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0F)?)*/gu
 
 const IMAGE_SIZE = 'var(--liveflow-danmaku-image-size, 1.2em)'
-const IMAGE_ALIGN = `var(--liveflow-danmaku-image-align, calc(0.35em - ${IMAGE_SIZE} / 2))`
+const IMAGE_ALIGN = 'var(--liveflow-danmaku-image-align, -0.15em)'
+const IMAGE_BLOCK = `calc((1em - ${IMAGE_SIZE}) / 2)`
 const IMAGE_GAP = 'var(--liveflow-danmaku-image-gap, 0px)'
 
 export function createInlineImageRenderer(options: InlineImageRendererOptions): TextRenderer {
@@ -79,6 +80,8 @@ export function createInlineImageRenderer(options: InlineImageRendererOptions): 
       image.style.marginLeft = `calc(${IMAGE_GAP} - ${width} * ${String(left)})`
       image.style.marginRight = `calc(${IMAGE_GAP} - ${width} * ${String(right)})`
       image.style.height = IMAGE_SIZE
+      image.style.marginTop = IMAGE_BLOCK
+      image.style.marginBottom = IMAGE_BLOCK
       image.style.objectFit = 'contain'
       image.style.verticalAlign = IMAGE_ALIGN
       image.addEventListener(

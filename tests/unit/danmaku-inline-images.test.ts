@@ -133,8 +133,9 @@ describe('inline image text renderer', () => {
         marginRight: `calc(var(--liveflow-danmaku-image-gap, 0px) - var(--liveflow-danmaku-image-size, 1.2em) * ${String(9 / 8)} * 0)`,
         objectFit: 'contain',
         height: 'var(--liveflow-danmaku-image-size, 1.2em)',
-        verticalAlign:
-          'var(--liveflow-danmaku-image-align, calc(0.35em - var(--liveflow-danmaku-image-size, 1.2em) / 2))',
+        marginTop: 'calc((1em - var(--liveflow-danmaku-image-size, 1.2em)) / 2)',
+        marginBottom: 'calc((1em - var(--liveflow-danmaku-image-size, 1.2em)) / 2)',
+        verticalAlign: 'var(--liveflow-danmaku-image-align, -0.15em)',
       },
     })
     expect(wave).toMatchObject({

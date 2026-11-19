@@ -25,6 +25,7 @@ interface InlineImageResults {
   readonly loadedImage: { readonly width: number; readonly height: number }
   readonly missingImage: { readonly width: number; readonly visibility: string }
   readonly unknownText: string
+  readonly plainLineHeight: number
   readonly oneLineHeight: number
   readonly wrappedHeight: number
 }
@@ -56,6 +57,7 @@ test('measures inline images from their declared size and keeps that box after l
   expect(results.trimmedWidth - results.plainWidth).toBeCloseTo(imageBox * 2 * 0.5, 0)
   expect(results.gappedWidth - results.gapPlainWidth).toBeCloseTo(imageBox * 2 * 0.5 + 6, 0)
   expect(results.unknownText).toBe('ab[unknown]')
+  expect(results.oneLineHeight).toBe(results.plainLineHeight)
   expect(results.wrappedHeight).toBeGreaterThan(results.oneLineHeight * 1.5)
 })
 
@@ -64,7 +66,7 @@ const fixtureHtml = `<!doctype html>
   <body style="margin:0;background:#000;color:#fff">
     <div id="lanes" style="position:relative;width:640px;height:120px;font:20px/1.5 sans-serif"></div>
     <div id="gap" style="position:relative;width:640px;height:60px;font:20px/1.5 sans-serif;--liveflow-danmaku-image-gap:3px"></div>
-    <div id="stack" style="position:relative;width:120px;height:240px;font:20px/1.5 sans-serif"></div>
+    <div id="stack" style="position:relative;width:120px;height:240px;font:20px/1.5 sans-serif;--liveflow-danmaku-image-size:1.6em"></div>
     <script type="module">
       import { createDomDanmakuRenderer } from '/danmaku/renderers/index.js'
       import { createInlineImageRenderer } from '/danmaku/inline-images.js'
@@ -150,6 +152,7 @@ const fixtureHtml = `<!doctype html>
           visibility: missing.style.visibility,
         },
         unknownText: unknownNode.textContent,
+        plainLineHeight: height(stack, 'a'),
         oneLineHeight: height(stack, 'a[ok]'),
         wrappedHeight: height(stack, '[ok][ok][ok][ok][ok][ok][ok][ok]'),
       })

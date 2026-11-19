@@ -71,15 +71,19 @@ const renderer = createDomDanmakuRenderer({
 ```text
 height: var(--liveflow-danmaku-image-size, 1.2em)
 width: calc(高度 × aspectRatio)
+margin-top / margin-bottom: calc((1em - 高度) / 2)
 margin-left: calc(var(--liveflow-danmaku-image-gap, 0px) - 宽度 × trim.left)
 margin-right: calc(var(--liveflow-danmaku-image-gap, 0px) - 宽度 × trim.right)
-vertical-align: var(--liveflow-danmaku-image-align, calc(0.35em - 高度 / 2))
+vertical-align: var(--liveflow-danmaku-image-align, -0.15em)
 object-fit: contain
 ```
 
 - 尺寸以 `em` 计，跟着所在那一行的字号缩放，手机和大屏都不用另算。
-- 默认对齐让图片中心落在字身中部，改了大小也保持居中。需要微调时在消息或图层上设置
-  `--liveflow-danmaku-image-align`。
+- 上下外边距让每张图片在排版里只占一个字高（1em），图片比行高大也不会把这一行撑高，滚动弹幕的
+  每条消息和列表的每一行高度都和纯文字一致。图片本身以这 1em 为中心向上下伸出。
+- 默认对齐把这 1em 放在基线下 0.15em 到基线上 0.85em，图片中心落在基线上 0.35em，正好是汉字
+  字身的中部，改了大小也保持居中。需要微调时在消息或图层上设置
+  `--liveflow-danmaku-image-align`，图片中心距基线等于这个值加 0.5em。
 - 因为宽高不依赖图片本身，测量时图片还没加载也能得到最终宽度，滚动弹幕的碰撞计算和列表折行
   都把图片算进去。加载完成、加载失败前后盒子尺寸都不变，不会和相邻弹幕叠在一起。
 - 加载失败的图片会隐藏（`visibility: hidden`），保留原来的空位，并调用 `onError`。
