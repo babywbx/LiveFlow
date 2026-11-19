@@ -388,6 +388,40 @@ describe('realtime overlay', () => {
     expect(overlay.getMetrics().deduped).toBe(1)
   })
 
+  it('orders waiting events by priority, time and id with stable collation ties', () => {
+    const clock = new FakeClock()
+    const renderer = new RecordingRenderer()
+    const overlay = createOverlayEngine({
+      contractVersion: CONTRACT_VERSION,
+      instanceId: 'primary',
+      clock,
+      defaultRenderer: renderer,
+    })
+    clock.advanceBy(10)
+    overlay.submit(event('active', 0))
+    for (const candidate of [
+      event('later', 2, 8),
+      event('é', 2, 5),
+      event('low', -Number.MAX_VALUE, 1),
+      event('e\u0301', 2, 5),
+      event('a', 2, 5),
+      event('urgent', Number.MAX_VALUE, 9),
+    ]) {
+      expect(overlay.submit(candidate).status).toBe('queued')
+    }
+    clock.advanceBy(6_000)
+    expect(renderer.rendered.map((item) => item.id)).toEqual([
+      'active',
+      'urgent',
+      'a',
+      'é',
+      'e\u0301',
+      'later',
+      'low',
+    ])
+    overlay.destroy()
+  })
+
   it('expires displayed keys in display order while preserving pending keys', () => {
     const clock = new FakeClock()
     const overlay = createOverlayEngine({

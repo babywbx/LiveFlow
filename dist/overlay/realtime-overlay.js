@@ -2,6 +2,7 @@ import { createSystemTimerClock } from '../shared/clock.js';
 import { CONTRACT_VERSION } from '../shared/contract.js';
 import { createDiagnosticEmitter } from '../shared/diagnostic-emitter.js';
 import { ContractVersionMismatchError } from '../shared/errors.js';
+import { insertSorted } from '../shared/insert-sorted.js';
 import { InvalidOverlayConfigurationError, OverlayCapacityError, OverlayCleanupError, OverlayDestroyedError, OverlayRenderError, OverlaySchedulingError, } from './errors.js';
 import { createSafeOverlayRenderer } from './safe-renderer.js';
 import { DEFAULT_OVERLAY_INSTANCE_STATE, mergeInstanceState, parseOverlayEvent, resolveOverlayLimits, validateInstanceId, validateInstanceState, validateRendererKind, } from './validation.js';
@@ -236,16 +237,7 @@ class RealtimeOverlayEngine {
             this.pending.pop();
             this.pendingKeys.delete(this.dedupeKey(lowest));
         }
-        this.pending.push(event);
-        this.pending.sort((left, right) => {
-            if (left.priority !== right.priority) {
-                return left.priority < right.priority ? 1 : -1;
-            }
-            if (left.receivedAt !== right.receivedAt) {
-                return left.receivedAt < right.receivedAt ? -1 : 1;
-            }
-            return left.id.localeCompare(right.id);
-        });
+        insertSorted(this.pending, event, precedesEvent);
         this.pendingKeys.add(key);
         if (lowest !== undefined) {
             this.counters.dropped += 1;
@@ -662,6 +654,13 @@ class LocalFullGrant {
         return () => { };
     }
     destroy() { }
+}
+function precedesEvent(left, right) {
+    if (left.priority !== right.priority)
+        return left.priority > right.priority;
+    if (left.receivedAt !== right.receivedAt)
+        return left.receivedAt < right.receivedAt;
+    return left.id.localeCompare(right.id) < 0;
 }
 function normalizeInvalidInstanceStateError(error) {
     try {

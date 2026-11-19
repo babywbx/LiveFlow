@@ -3,6 +3,7 @@ import { CONTRACT_VERSION } from '../shared/contract.js'
 import { createDiagnosticEmitter, type DiagnosticEmitter } from '../shared/diagnostic-emitter.js'
 import type { Destroyable } from '../shared/disposable.js'
 import { ContractVersionMismatchError } from '../shared/errors.js'
+import { insertSorted } from '../shared/insert-sorted.js'
 import {
   InvalidOverlayConfigurationError,
   OverlayCapacityError,
@@ -302,16 +303,7 @@ class RealtimeOverlayEngine implements OverlayEngine {
       this.pending.pop()
       this.pendingKeys.delete(this.dedupeKey(lowest))
     }
-    this.pending.push(event)
-    this.pending.sort((left, right) => {
-      if (left.priority !== right.priority) {
-        return left.priority < right.priority ? 1 : -1
-      }
-      if (left.receivedAt !== right.receivedAt) {
-        return left.receivedAt < right.receivedAt ? -1 : 1
-      }
-      return left.id.localeCompare(right.id)
-    })
+    insertSorted(this.pending, event, precedesEvent)
     this.pendingKeys.add(key)
     if (lowest !== undefined) {
       this.counters.dropped += 1
@@ -744,6 +736,12 @@ class LocalFullGrant implements OverlayBudgetGrant {
   }
 
   destroy(): void {}
+}
+
+function precedesEvent(left: RealtimeOverlayEvent, right: RealtimeOverlayEvent): boolean {
+  if (left.priority !== right.priority) return left.priority > right.priority
+  if (left.receivedAt !== right.receivedAt) return left.receivedAt < right.receivedAt
+  return left.id.localeCompare(right.id) < 0
 }
 
 function normalizeInvalidInstanceStateError(error: unknown): InvalidOverlayConfigurationError {
