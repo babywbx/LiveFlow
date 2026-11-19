@@ -225,25 +225,25 @@ overlay.submit({
 Every engine and adapter is a separate ESM subpath. The root entry exports only the shared contract
 and never statically pulls in an engine or a player runtime.
 
-| Subpath                            | Provides                                             |   gzip | Budget |
-| ---------------------------------- | ---------------------------------------------------- | -----: | -----: |
-| `@babywbx/liveflow`                | `CONTRACT_VERSION`, shared types, typed errors       |      — |      — |
-| `@babywbx/liveflow/continuity`     | Continuity controller and player adapter contract    | 5.9 KB |   6 KB |
-| `@babywbx/liveflow/danmaku`        | Bounded danmaku scheduler                            | 6.8 KB |   7 KB |
-| `@babywbx/liveflow/danmaku/dom`    | Safe structured DOM renderer and color helpers       | 3.3 KB |   4 KB |
-| `@babywbx/liveflow/overlay`        | Realtime event engine and shared budget coordinator  | 6.2 KB |   8 KB |
-| `@babywbx/liveflow/overlay/banner` | Event banner presenter (optional)                    | 4.3 KB |   5 KB |
-| `@babywbx/liveflow/chrome`         | Player chrome visibility controller                  | 1.5 KB |   2 KB |
-| `@babywbx/liveflow/multiview`      | Multiview grid layout math and grid track contract   | 0.9 KB |   2 KB |
-| `@babywbx/liveflow/native-video`   | Native `<video>` adapter                             | 3.6 KB |   4 KB |
-| `@babywbx/liveflow/page-activity`  | Page visibility source for suspended playback        | 0.5 KB |   2 KB |
-| `@babywbx/liveflow/artplayer`      | ArtPlayer-like seam with no static player dependency | 3.6 KB |   4 KB |
-| `@babywbx/liveflow/dplayer`        | DPlayer-like seam with no static player dependency   | 3.5 KB |   4 KB |
-| `@babywbx/liveflow/videojs`        | Video.js-like seam with no static player dependency  | 3.7 KB |   4 KB |
-| `@babywbx/liveflow/xgplayer`       | XGPlayer-like seam with no static player dependency  | 3.5 KB |   4 KB |
+| Subpath                            | Provides                                             |    gzip | Budget |
+| ---------------------------------- | ---------------------------------------------------- | ------: | -----: |
+| `@babywbx/liveflow`                | `CONTRACT_VERSION`, shared types, typed errors       |       — |      — |
+| `@babywbx/liveflow/continuity`     | Continuity controller and player adapter contract    | 5.6 KiB |  6 KiB |
+| `@babywbx/liveflow/danmaku`        | Bounded danmaku scheduler                            | 6.7 KiB |  7 KiB |
+| `@babywbx/liveflow/danmaku/dom`    | Safe structured DOM renderer and color helpers       | 3.3 KiB |  4 KiB |
+| `@babywbx/liveflow/overlay`        | Realtime event engine and shared budget coordinator  | 6.0 KiB |  8 KiB |
+| `@babywbx/liveflow/overlay/banner` | Event banner presenter (optional)                    | 4.3 KiB |  5 KiB |
+| `@babywbx/liveflow/chrome`         | Player chrome visibility controller                  | 1.5 KiB |  2 KiB |
+| `@babywbx/liveflow/multiview`      | Multiview grid layout math and grid track contract   | 0.9 KiB |  2 KiB |
+| `@babywbx/liveflow/native-video`   | Native `<video>` adapter                             | 3.6 KiB |  4 KiB |
+| `@babywbx/liveflow/page-activity`  | Page visibility source for suspended playback        | 0.5 KiB |  2 KiB |
+| `@babywbx/liveflow/artplayer`      | ArtPlayer-like seam with no static player dependency | 3.5 KiB |  4 KiB |
+| `@babywbx/liveflow/dplayer`        | DPlayer-like seam with no static player dependency   | 3.5 KiB |  4 KiB |
+| `@babywbx/liveflow/videojs`        | Video.js-like seam with no static player dependency  | 3.7 KiB |  4 KiB |
+| `@babywbx/liveflow/xgplayer`       | XGPlayer-like seam with no static player dependency  | 3.5 KiB |  4 KiB |
 
 Measured minified and gzipped by `pnpm size:check`, which fails CI on any regression past the
-budget column. The four core subpaths combined measure 20.0 KB against a 20 KB ceiling.
+budget column. The four core subpaths combined measure 19,977 bytes (19.5 KiB) against a 20 KiB ceiling.
 
 <div align="right">
 
