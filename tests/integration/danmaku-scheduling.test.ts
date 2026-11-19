@@ -286,6 +286,28 @@ describe('danmaku scheduling', () => {
     engine.destroy()
   })
 
+  it('continues past blocked scrolling messages when a slower follower fits', () => {
+    const clock = new FakeClock()
+    const renderer = new SizedRenderer()
+    const engine = createDanmakuEngine({
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      renderer,
+      viewport: { width: 320, height: 32 },
+      policy: { laneGap: 20, scrollDurationMs: 4_000, scrollOverlapStartRatio: 1 },
+    })
+
+    engine.push(message('leading'))
+    clock.advanceBy(1_248)
+    engine.push(message('wide'))
+    engine.push(message('narrow'))
+    clock.advanceBy(16)
+
+    expect(renderer.frames.at(-1)?.mounts.map((item) => item.message.id)).toEqual(['narrow'])
+    expect(engine.getMetrics().pendingDepth).toBe(1)
+    engine.destroy()
+  })
+
   it('does not let measured lane waiters block later candidates', () => {
     const clock = new FakeClock()
     const renderer = new SizedRenderer()

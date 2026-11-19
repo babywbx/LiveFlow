@@ -2,7 +2,7 @@ import { createSystemClock } from '../shared/clock.js';
 import { CONTRACT_VERSION } from '../shared/contract.js';
 import { ContractVersionMismatchError } from '../shared/errors.js';
 import { DanmakuRendererError, InvalidDanmakuConfigurationError, InvalidDanmakuMessageError, NonMonotonicDanmakuClockError, } from './errors.js';
-import { emitSanitizationDiagnostics, resolveLimits, resolvePolicy, sanitizeMessage, validateRequiredMessageFields, validateViewport, } from './validation.js';
+import { resolveLimits, resolvePolicy, sanitizeMessage, validateRequiredMessageFields, validateViewport, } from './validation.js';
 const MAX_DIAGNOSTIC_CODES = 16;
 const DROP_COUNT_KEYS = {
     duplicate: 'duplicate',
@@ -100,8 +100,12 @@ export function createDanmakuEngine(options) {
             }
             if (sanitized.metadataDiscarded) {
                 metrics.metadataDiscarded += 1;
+                emitDiagnostic('metadata-discarded', required.id);
             }
-            emitSanitizationDiagnostics(sanitized, emitDiagnostic);
+            if (sanitized.identitiesTruncated)
+                emitDiagnostic('identities-truncated', required.id);
+            if (sanitized.colorDiscarded)
+                emitDiagnostic('color-discarded', required.id);
             if (isRecentDuplicate(sanitized.message, now)) {
                 recordDrop('duplicate');
                 return { accepted: false, reason: 'duplicate' };
@@ -185,16 +189,8 @@ export function createDanmakuEngine(options) {
             const resolvedPolicy = nextPolicy === undefined ? policy : resolvePolicy({ ...policy, ...nextPolicy });
             const clockNow = readNow();
             const now = pausedAt ?? clockNow;
-            const scrollPositions = new Map();
-            const scrollProgress = new Map();
-            const previousLaneSpans = new Map();
-            for (const item of visible) {
-                previousLaneSpans.set(item, item.laneSpan);
-                if (!stack && item.message.mode === 'scroll') {
-                    scrollPositions.set(item, positionAt(item, now).x);
-                    scrollProgress.set(item, progressAt(item, now));
-                }
-            }
+            const previousWidth = viewport.width;
+            const previousLaneHeight = policy.laneHeight;
             policy = resolvedPolicy;
             viewport = { ...nextViewport };
             laneCount = calculateLaneCount(viewport, policy);
@@ -205,18 +201,21 @@ export function createDanmakuEngine(options) {
             const unmounts = [];
             if (!stack) {
                 for (const item of visible) {
-                    const previousX = scrollPositions.get(item);
-                    const previousProgress = scrollProgress.get(item);
-                    if (previousX !== undefined && previousProgress !== undefined) {
-                        rebaseScrollPosition(item, previousX, previousProgress, now);
+                    if (item.message.mode === 'scroll') {
+                        const elapsed = scrollElapsed(item, now);
+                        const previousX = previousWidth - elapsed * item.scrollPixelsPerMs;
+                        const progress = policy.scrollDurationMs === undefined || policy.scrollDurationMs === null
+                            ? (viewport.width - previousX) / (viewport.width + item.width)
+                            : elapsed / (item.endAt - item.startAt);
+                        setScrollProgress(item, progress, now);
                     }
-                    item.laneSpan = Math.max(1, Math.ceil(item.height / policy.laneHeight));
+                    item.laneSpan = lanesForHeight(item.height, policy.laneHeight);
                 }
                 reflowScrollOverlap(now);
                 const retained = [];
                 for (const item of visible) {
                     if (item.lane + item.laneSpan > laneCount ||
-                        retained.some((existing) => visibleItemsConflict(item, existing, now, previousLaneSpans))) {
+                        retained.some((existing) => visibleItemsConflict(item, existing, now, previousLaneHeight))) {
                         unmounts.push(item.message.id);
                         recordDrop('no-lane');
                     }
@@ -366,7 +365,7 @@ export function createDanmakuEngine(options) {
         }
         catch {
             fatalError = new NonMonotonicDanmakuClockError();
-            emitDiagnostic({ scope: 'danmaku', code: 'clock-failed', level: 'warn' });
+            emitDiagnostic('clock-failed');
             return;
         }
         const frameStartedAt = now;
@@ -412,12 +411,12 @@ export function createDanmakuEngine(options) {
         }
         catch {
             fatalError = new NonMonotonicDanmakuClockError();
-            emitDiagnostic({ scope: 'danmaku', code: 'clock-failed', level: 'warn' });
+            emitDiagnostic('clock-failed');
             return;
         }
         if (frameElapsed > policy.frameBudgetMs) {
             metrics.frameBudgetOverruns += 1;
-            emitDiagnostic({ scope: 'danmaku', code: 'frame-budget-exceeded', level: 'warn' });
+            emitDiagnostic('frame-budget-exceeded');
         }
         scheduleFrame();
     }
@@ -515,6 +514,9 @@ export function createDanmakuEngine(options) {
                 candidate.measurement = measurement;
         }
         const mounted = [];
+        let blockedMode;
+        let blockedSpan = 0;
+        let blockedSpeed = 0;
         let pendingIndex = 0;
         while (pendingIndex < pending.length && mounted.length < mountCapacity) {
             const candidate = pending[pendingIndex];
@@ -525,7 +527,7 @@ export function createDanmakuEngine(options) {
                 pendingIndex += 1;
                 continue;
             }
-            const laneSpan = Math.max(1, Math.ceil(measurement.height / policy.laneHeight));
+            const laneSpan = lanesForHeight(measurement.height, policy.laneHeight);
             const scrolls = !stack && candidate.message.mode === 'scroll';
             const duration = stack
                 ? Number.POSITIVE_INFINITY
@@ -533,8 +535,13 @@ export function createDanmakuEngine(options) {
                     ? scrollDuration(measurement.width, candidate.sampleRank)
                     : policy.fixedDurationMs;
             const scrollSpeed = scrolls ? (viewport.width + measurement.width) / duration : 0;
-            const lane = stack ? 0 : findLane(candidate.message.mode, laneSpan, scrollSpeed, now);
+            const mode = candidate.message.mode;
+            const blocked = mode === blockedMode && laneSpan === blockedSpan && scrollSpeed === blockedSpeed;
+            const lane = stack ? 0 : blocked ? null : findLane(mode, laneSpan, scrollSpeed, now);
             if (lane === null) {
+                blockedMode = mode;
+                blockedSpan = laneSpan;
+                blockedSpeed = scrollSpeed;
                 if (now - candidate.enqueuedAt >= policy.maxLaneWaitMs) {
                     pending.splice(pendingIndex, 1);
                     recordDrop('no-lane');
@@ -606,7 +613,7 @@ export function createDanmakuEngine(options) {
             const slack = laneSlack(lane, span, mode, scrollSpeed, now);
             if (slack < 0)
                 continue;
-            if (!freest)
+            if (!freest || slack === Number.POSITIVE_INFINITY)
                 return lane;
             if (slack > bestSlack) {
                 bestLane = lane;
@@ -624,8 +631,7 @@ export function createDanmakuEngine(options) {
             if (mode !== 'scroll' || item.message.mode !== 'scroll') {
                 return -1;
             }
-            const position = positionAt(item, now);
-            const gap = viewport.width - (position.x + item.width);
+            const gap = viewport.width - (scrollX(item, now) + item.width);
             const requiredGap = requiredScrollGap(policy.scrollOverlapStartRatio * viewport.width, scrollSpeed, item.scrollPixelsPerMs);
             slack = Math.min(slack, gap - requiredGap);
             if (slack < 0)
@@ -633,22 +639,18 @@ export function createDanmakuEngine(options) {
         }
         return slack;
     }
-    function visibleItemsConflict(candidate, existing, now, previousLaneSpans) {
+    function visibleItemsConflict(candidate, existing, now, previousLaneHeight) {
         if (!spansOverlap(candidate.lane, candidate.laneSpan, existing.lane, existing.laneSpan)) {
             return false;
         }
         if (candidate.message.mode !== 'scroll' || existing.message.mode !== 'scroll') {
             return true;
         }
-        const candidatePreviousSpan = previousLaneSpans.get(candidate);
-        const existingPreviousSpan = previousLaneSpans.get(existing);
-        if (candidatePreviousSpan !== undefined &&
-            existingPreviousSpan !== undefined &&
-            spansOverlap(candidate.lane, candidatePreviousSpan, existing.lane, existingPreviousSpan)) {
+        if (spansOverlap(candidate.lane, lanesForHeight(candidate.height, previousLaneHeight), existing.lane, lanesForHeight(existing.height, previousLaneHeight))) {
             return false;
         }
-        const candidateX = positionAt(candidate, now).x;
-        const existingX = positionAt(existing, now).x;
+        const candidateX = scrollX(candidate, now);
+        const existingX = scrollX(existing, now);
         return (candidateX < existingX + existing.width + policy.laneGap &&
             existingX < candidateX + candidate.width + policy.laneGap);
     }
@@ -671,26 +673,15 @@ export function createDanmakuEngine(options) {
                 y,
             };
         }
-        const elapsed = Math.min(item.endAt, Math.max(item.startAt, now)) - item.startAt;
-        return {
-            x: viewport.width - elapsed * item.scrollPixelsPerMs,
-            y,
-        };
+        return { x: scrollX(item, now), y };
+    }
+    function scrollX(item, now) {
+        return viewport.width - scrollElapsed(item, now) * item.scrollPixelsPerMs;
     }
     function scrollDuration(width, sampleRank) {
         return ((policy.scrollDurationMs ??
             ((viewport.width + width) / policy.scrollPixelsPerSecond) * 1_000) +
             (policy.scrollDurationJitterMs ?? 0) * (sampleRank / 0x1_0000_0000));
-    }
-    function progressAt(item, now) {
-        const elapsed = Math.min(item.endAt, Math.max(item.startAt, now)) - item.startAt;
-        return elapsed / (item.endAt - item.startAt);
-    }
-    function rebaseScrollPosition(item, x, previousProgress, now) {
-        const progress = policy.scrollDurationMs === undefined || policy.scrollDurationMs === null
-            ? Math.min(1, Math.max(0, (viewport.width - x) / (viewport.width + item.width)))
-            : previousProgress;
-        setScrollProgress(item, progress, now);
     }
     function reflowScrollOverlap(now) {
         if (policy.scrollOverlapStartRatio <= 0)
@@ -703,7 +694,7 @@ export function createDanmakuEngine(options) {
                 trailing.lane + trailing.laneSpan > laneCount) {
                 continue;
             }
-            const trailingX = positionAt(trailing, now).x;
+            const trailingX = scrollX(trailing, now);
             if (trailingX < guardX)
                 continue;
             for (let leadingIndex = trailingIndex - 1; leadingIndex >= 0; leadingIndex -= 1) {
@@ -714,7 +705,7 @@ export function createDanmakuEngine(options) {
                     !spansOverlap(trailing.lane, trailing.laneSpan, leading.lane, leading.laneSpan)) {
                     continue;
                 }
-                const leadingX = positionAt(leading, now).x;
+                const leadingX = scrollX(leading, now);
                 const requiredGap = requiredScrollGap(trailingX - guardX, trailing.scrollPixelsPerMs, leading.scrollPixelsPerMs);
                 const gap = trailingX - (leadingX + leading.width);
                 if (gap >= requiredGap)
@@ -762,23 +753,26 @@ export function createDanmakuEngine(options) {
         }
         catch {
         }
-        emitDiagnostic({ scope: 'danmaku', code: 'renderer-failed', level: 'warn' });
+        emitDiagnostic('renderer-failed');
         return error;
     }
-    function emitDiagnostic(event) {
+    function emitDiagnostic(code, messageId) {
         if (options.onDiagnostic === undefined) {
             return;
         }
         const now = lastNow;
-        const previous = diagnosticTimes.get(event.code);
+        const previous = diagnosticTimes.get(code);
         if (previous !== undefined && now - previous < DIAGNOSTIC_COOLDOWN_MS) {
             return;
         }
         if (previous === undefined && diagnosticTimes.size >= MAX_DIAGNOSTIC_CODES) {
             return;
         }
-        diagnosticTimes.set(event.code, now);
+        diagnosticTimes.set(code, now);
         try {
+            const event = { scope: 'danmaku', code, level: 'warn' };
+            if (messageId !== undefined)
+                event.detail = { messageId };
             options.onDiagnostic(event);
         }
         catch {
@@ -801,6 +795,12 @@ export function createDanmakuEngine(options) {
             droppedByReason: { ...metrics.droppedByReason },
         };
     }
+}
+function scrollElapsed(item, now) {
+    return Math.min(item.endAt, Math.max(item.startAt, now)) - item.startAt;
+}
+function lanesForHeight(height, laneHeight) {
+    return Math.max(1, Math.ceil(height / laneHeight));
 }
 function calculateLaneCount(viewport, policy) {
     return Math.max(1, Math.floor(viewport.height / policy.laneHeight));

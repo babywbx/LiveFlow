@@ -100,52 +100,17 @@ export function validateViewport(viewport) {
     }
 }
 export function sanitizeMessage(input, required, limits) {
-    const identitiesResult = sanitizeIdentities(readMessageField(input, 'identities'), limits.maxBadgesPerMessage);
-    const metadataResult = sanitizeMessageMetadata(input, limits);
-    const colorInput = readMessageField(input, 'color');
-    const color = sanitizeColor(colorInput);
-    const senderResult = sanitizeSender(readMessageField(input, 'sender'));
-    const message = {
-        ...required,
-        ...(color === undefined ? {} : { color }),
-        ...(senderResult.sender === undefined ? {} : { sender: senderResult.sender }),
-        ...(identitiesResult.identities === undefined
-            ? {}
-            : { identities: identitiesResult.identities }),
-        ...(metadataResult.metadata === undefined ? {} : { metadata: metadataResult.metadata }),
+    const result = {
+        message: required,
+        metadataDiscarded: false,
+        identitiesTruncated: false,
+        colorDiscarded: false,
     };
-    return {
-        message,
-        metadataDiscarded: metadataResult.discarded,
-        identitiesTruncated: identitiesResult.truncated,
-        colorDiscarded: (colorInput !== undefined && color === undefined) || senderResult.colorDiscarded,
-    };
-}
-export function emitSanitizationDiagnostics(sanitized, emit) {
-    if (sanitized.metadataDiscarded) {
-        emit({
-            scope: 'danmaku',
-            code: 'metadata-discarded',
-            level: 'warn',
-            detail: { messageId: sanitized.message.id },
-        });
-    }
-    if (sanitized.identitiesTruncated) {
-        emit({
-            scope: 'danmaku',
-            code: 'identities-truncated',
-            level: 'warn',
-            detail: { messageId: sanitized.message.id },
-        });
-    }
-    if (sanitized.colorDiscarded) {
-        emit({
-            scope: 'danmaku',
-            code: 'color-discarded',
-            level: 'warn',
-            detail: { messageId: sanitized.message.id },
-        });
-    }
+    copyIdentities(input.identities, result, limits.maxBadgesPerMessage);
+    copyMetadata(input, result, limits);
+    copyColor(input.color, result.message, 'color', result);
+    copySender(input.sender, result);
+    return result;
 }
 function validatePositiveIntegerRecord(limits) {
     for (const [key, value] of Object.entries(limits)) {
@@ -158,14 +123,11 @@ export function validateRequiredMessageFields(input) {
     if (typeof input !== 'object' || input === null) {
         throw new InvalidDanmakuMessageError('message');
     }
-    const id = readMessageField(input, 'id');
-    const receivedAt = readMessageField(input, 'receivedAt');
-    const text = readMessageField(input, 'text');
-    const mode = readMessageField(input, 'mode');
-    const priority = readMessageField(input, 'priority');
-    if (typeof id !== 'string') {
-        throw new InvalidDanmakuMessageError('id');
-    }
+    const id = input.id;
+    const receivedAt = input.receivedAt;
+    const text = input.text;
+    const mode = input.mode;
+    const priority = input.priority;
     validateBoundedString(id, 'id', MAX_ID_LENGTH, false);
     if (typeof receivedAt !== 'number' || !Number.isFinite(receivedAt) || receivedAt < 0) {
         throw new InvalidDanmakuMessageError('receivedAt');
@@ -181,35 +143,29 @@ export function validateRequiredMessageFields(input) {
     }
     return { id, receivedAt, text, mode, priority };
 }
-function sanitizeSender(input) {
-    if (input === undefined) {
-        return { colorDiscarded: false };
-    }
+function copySender(input, result) {
+    if (input === undefined)
+        return;
     if (!isPlainRecord(input)) {
         throw new InvalidDanmakuMessageError('sender');
     }
+    const sender = {};
     const displayName = input.displayName;
     const avatarKey = input.avatarKey;
     if (displayName !== undefined) {
-        validateUnknownBoundedString(displayName, 'sender.displayName', MAX_NAME_LENGTH, true);
+        validateBoundedString(displayName, 'sender.displayName', MAX_NAME_LENGTH, true);
+        sender.displayName = displayName;
     }
     if (avatarKey !== undefined) {
-        validateUnknownBoundedString(avatarKey, 'sender.avatarKey', MAX_ASSET_KEY_LENGTH, false);
+        validateBoundedString(avatarKey, 'sender.avatarKey', MAX_ASSET_KEY_LENGTH, false);
+        sender.avatarKey = avatarKey;
     }
-    const color = sanitizeColor(input.color, 'sender.color');
-    return {
-        sender: {
-            ...(typeof displayName === 'string' ? { displayName } : {}),
-            ...(color === undefined ? {} : { color }),
-            ...(typeof avatarKey === 'string' ? { avatarKey } : {}),
-        },
-        colorDiscarded: input.color !== undefined && color === undefined,
-    };
+    result.message.sender = sender;
+    copyColor(input.color, sender, 'sender.color', result);
 }
-function sanitizeIdentities(input, limit) {
-    if (input === undefined) {
-        return { truncated: false };
-    }
+function copyIdentities(input, result, limit) {
+    if (input === undefined)
+        return;
     if (!Array.isArray(input)) {
         throw new InvalidDanmakuMessageError('identities');
     }
@@ -229,53 +185,39 @@ function sanitizeIdentities(input, limit) {
         const level = identity.level;
         const variant = identity.variant;
         const assetKey = identity.assetKey;
-        validateUnknownBoundedString(kind, 'identities.kind', MAX_IDENTITY_KIND_LENGTH, false);
-        validateUnknownBoundedString(label, 'identities.label', MAX_IDENTITY_LABEL_LENGTH, true);
+        validateBoundedString(kind, 'identities.kind', MAX_IDENTITY_KIND_LENGTH, false);
+        validateBoundedString(label, 'identities.label', MAX_IDENTITY_LABEL_LENGTH, true);
         if (level !== undefined &&
             (typeof level !== 'number' || !Number.isSafeInteger(level) || level < 0)) {
             throw new InvalidDanmakuMessageError('identities.level');
         }
         if (variant !== undefined) {
-            validateUnknownBoundedString(variant, 'identities.variant', MAX_VARIANT_LENGTH, false);
+            validateBoundedString(variant, 'identities.variant', MAX_VARIANT_LENGTH, false);
         }
         if (assetKey !== undefined) {
-            validateUnknownBoundedString(assetKey, 'identities.assetKey', MAX_ASSET_KEY_LENGTH, false);
-        }
-        if (typeof kind !== 'string' || typeof label !== 'string') {
-            throw new InvalidDanmakuMessageError('identities');
+            validateBoundedString(assetKey, 'identities.assetKey', MAX_ASSET_KEY_LENGTH, false);
         }
         identities.push({
             kind,
             label,
-            ...(typeof level === 'number' ? { level } : {}),
-            ...(typeof variant === 'string' ? { variant } : {}),
-            ...(typeof assetKey === 'string' ? { assetKey } : {}),
+            ...(level === undefined ? {} : { level }),
+            ...(variant === undefined ? {} : { variant }),
+            ...(assetKey === undefined ? {} : { assetKey }),
         });
     }
-    return {
-        identities,
-        truncated: identityCount > limit,
-    };
+    result.message.identities = identities;
+    result.identitiesTruncated = identityCount > limit;
 }
-function sanitizeMetadata(input, limits) {
-    if (input === undefined) {
-        return { discarded: false };
-    }
+function copyMetadata(input, result, limits) {
     try {
+        const metadata = input.metadata;
+        if (metadata === undefined)
+            return;
         const budget = { keys: 0, bytes: 0, encoder: new TextEncoder() };
-        const sanitized = copyMetadataObject(input, 0, budget, limits);
-        return { metadata: sanitized, discarded: false };
+        result.message.metadata = copyMetadataObject(metadata, 0, budget, limits);
     }
     catch {
-        return { discarded: true };
-    }
-}
-function sanitizeMessageMetadata(input, limits) {
-    try {
-        return sanitizeMetadata(readMessageField(input, 'metadata'), limits);
-    }
-    catch {
-        return { discarded: true };
+        result.metadataDiscarded = true;
     }
 }
 function copyMetadataValue(value, depth, budget, limits) {
@@ -378,17 +320,16 @@ function isPlainRecord(value) {
     const prototype = Reflect.getPrototypeOf(value);
     return prototype === Object.prototype || prototype === null;
 }
-function sanitizeColor(color, field = 'color') {
-    if (color === undefined) {
-        return undefined;
-    }
-    if (typeof color !== 'string') {
+function copyColor(color, target, field, result) {
+    if (color === undefined)
+        return;
+    if (typeof color !== 'string')
         throw new InvalidDanmakuMessageError(field);
-    }
-    return normalizeHexColor(color) ?? undefined;
-}
-function readMessageField(input, field) {
-    return Reflect.get(input, field);
+    const normalized = normalizeHexColor(color);
+    if (normalized === null)
+        result.colorDiscarded = true;
+    else
+        target.color = normalized;
 }
 function validateBoundedString(value, field, maxLength, allowEmpty) {
     if (typeof value !== 'string' ||
@@ -396,10 +337,4 @@ function validateBoundedString(value, field, maxLength, allowEmpty) {
         value.length > maxLength) {
         throw new InvalidDanmakuMessageError(field);
     }
-}
-function validateUnknownBoundedString(value, field, maxLength, allowEmpty) {
-    if (typeof value !== 'string') {
-        throw new InvalidDanmakuMessageError(field);
-    }
-    validateBoundedString(value, field, maxLength, allowEmpty);
 }
