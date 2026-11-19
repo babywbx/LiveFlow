@@ -21,7 +21,13 @@ const renderer = createDomDanmakuRenderer({
       const emote = emotes.get(token)
       return emote === undefined
         ? null
-        : { src: emote.url, stillSrc: emote.stillUrl, alt: token, aspectRatio: emote.ratio }
+        : {
+            src: emote.url,
+            stillSrc: emote.stillUrl,
+            alt: token,
+            aspectRatio: emote.ratio,
+            trim: emote.trim,
+          }
     },
   }),
 })
@@ -48,6 +54,7 @@ const renderer = createDomDanmakuRenderer({
 | `stillSrc`    | 可选的静态图，减少动态效果时代替 `src`                  |
 | `alt`         | 替代文字，默认是匹配到的原文                            |
 | `aspectRatio` | 宽除以高，默认 `1`，必须是有限正数                      |
+| `trim`        | 左右两侧透明留白各占图片宽度的比例，见下文              |
 
 ## 匹配与替换
 
@@ -64,6 +71,8 @@ const renderer = createDomDanmakuRenderer({
 ```text
 height: var(--liveflow-danmaku-image-size, 1.2em)
 width: calc(高度 × aspectRatio)
+margin-left: calc(var(--liveflow-danmaku-image-gap, 0px) - 宽度 × trim.left)
+margin-right: calc(var(--liveflow-danmaku-image-gap, 0px) - 宽度 × trim.right)
 vertical-align: var(--liveflow-danmaku-image-align, calc(0.35em - 高度 / 2))
 object-fit: contain
 ```
@@ -75,6 +84,29 @@ object-fit: contain
   都把图片算进去。加载完成、加载失败前后盒子尺寸都不变，不会和相邻弹幕叠在一起。
 - 加载失败的图片会隐藏（`visibility: hidden`），保留原来的空位，并调用 `onError`。
 - 描边、阴影等效果由样式决定，例如 `.liveflow-danmaku__image { filter: drop-shadow(...) }`。
+
+## 左右间距
+
+很多表情图在画布左右留有透明边，留白多少各不相同，直接排在文字里，有的贴着文字，有的隔得很开。
+`trim` 告诉渲染器每张图左右两侧透明的部分各占宽度的多少，渲染器用负外边距把这部分收回去，再加上
+`--liveflow-danmaku-image-gap`，这样每张图可见内容到两侧的距离都等于这个间距，和字体
+用左右边距排字是同一个道理。
+
+- `trim.left`、`trim.right` 默认 `0`，都不能小于 `0`，两者之和必须小于 `1`，否则这个片段保持文字
+  并调用 `onError`。
+- 动图要取所有帧里留白最小的一侧，同时提供 `stillSrc` 时还要和静态图取较小值，保证任何一帧都不会
+  和相邻内容重叠。
+- `--liveflow-danmaku-image-gap` 默认 `0px`。不传 `trim` 时图片两侧各留出这个间距；两者都不设置时，
+  图片盒子紧挨着相邻文字。
+- 间距按图片高度的比例取值，图片放大缩小时间距跟着变：
+
+  ```css
+  .liveflow-danmaku__message {
+    --liveflow-danmaku-image-gap: calc(var(--liveflow-danmaku-image-size) * 0.07);
+  }
+  ```
+
+- 外边距算进测量宽度，碰撞计算和折行看到的就是收紧以后的宽度。
 
 ## 动图与减少动态效果
 

@@ -63,6 +63,7 @@ function createFixture(prefersReducedMotion = false): Fixture {
 const IMAGES: Readonly<Record<string, InlineImage>> = {
   '[smile]': { src: '/emotes/smile.png', aspectRatio: 9 / 8 },
   '[wave]': { src: 'https://cdn.example.test/wave.gif', stillSrc: '/emotes/wave.png', alt: 'wave' },
+  '[trim]': { src: '/emotes/trim.png', aspectRatio: 2, trim: { left: 0.25, right: 0.125 } },
 }
 
 function renderer(overrides: Partial<InlineImageRendererOptions> = {}): {
@@ -128,6 +129,8 @@ describe('inline image text renderer', () => {
       style: {
         display: 'inline-block',
         width: `calc(var(--liveflow-danmaku-image-size, 1.2em) * ${String(9 / 8)})`,
+        marginLeft: `calc(var(--liveflow-danmaku-image-gap, 0px) - var(--liveflow-danmaku-image-size, 1.2em) * ${String(9 / 8)} * 0)`,
+        marginRight: `calc(var(--liveflow-danmaku-image-gap, 0px) - var(--liveflow-danmaku-image-size, 1.2em) * ${String(9 / 8)} * 0)`,
         objectFit: 'contain',
         height: 'var(--liveflow-danmaku-image-size, 1.2em)',
         verticalAlign:
@@ -138,6 +141,34 @@ describe('inline image text renderer', () => {
       alt: 'wave',
       style: { width: 'calc(var(--liveflow-danmaku-image-size, 1.2em) * 1)' },
     })
+  })
+
+  it('pulls neighbours over transparent edges so the visible gap is the same', () => {
+    const [image] = renderer()
+      .render('[trim]')
+      .filter((node) => typeof node !== 'string')
+
+    expect(image?.style).toMatchObject({
+      marginLeft:
+        'calc(var(--liveflow-danmaku-image-gap, 0px) - var(--liveflow-danmaku-image-size, 1.2em) * 2 * 0.25)',
+      marginRight:
+        'calc(var(--liveflow-danmaku-image-gap, 0px) - var(--liveflow-danmaku-image-size, 1.2em) * 2 * 0.125)',
+    })
+  })
+
+  it('leaves images with impossible trims as text', () => {
+    const trims = [
+      { left: -0.1 },
+      { right: Number.NaN },
+      { left: 0.5, right: 0.5 },
+      { left: Infinity },
+    ]
+    const { render, errors } = renderer({
+      resolve: (token) => ({ src: '/a.png', trim: trims[Number(token.slice(1, -1))] ?? {} }),
+    })
+
+    expect(render('[0][1][2][3]')).toEqual(['[0][1][2][3]'])
+    expect(errors).toEqual(['[0]', '[1]', '[2]', '[3]'])
   })
 
   it('leaves unsafe or failing images as text and reports the token', () => {

@@ -18,6 +18,9 @@ interface InlineImageResults {
   readonly plainWidth: number
   readonly imageWidth: number
   readonly missingWidth: number
+  readonly trimmedWidth: number
+  readonly gapPlainWidth: number
+  readonly gappedWidth: number
   readonly mountedWidth: number
   readonly loadedImage: { readonly width: number; readonly height: number }
   readonly missingImage: { readonly width: number; readonly visibility: string }
@@ -50,6 +53,8 @@ test('measures inline images from their declared size and keeps that box after l
     width: expect.closeTo(imageBox * 2, 0),
     visibility: 'hidden',
   })
+  expect(results.trimmedWidth - results.plainWidth).toBeCloseTo(imageBox * 2 * 0.5, 0)
+  expect(results.gappedWidth - results.gapPlainWidth).toBeCloseTo(imageBox * 2 * 0.5 + 6, 0)
   expect(results.unknownText).toBe('ab[unknown]')
   expect(results.wrappedHeight).toBeGreaterThan(results.oneLineHeight * 1.5)
 })
@@ -58,6 +63,7 @@ const fixtureHtml = `<!doctype html>
 <html>
   <body style="margin:0;background:#000;color:#fff">
     <div id="lanes" style="position:relative;width:640px;height:120px;font:20px/1.5 sans-serif"></div>
+    <div id="gap" style="position:relative;width:640px;height:60px;font:20px/1.5 sans-serif;--liveflow-danmaku-image-gap:3px"></div>
     <div id="stack" style="position:relative;width:120px;height:240px;font:20px/1.5 sans-serif"></div>
     <script type="module">
       import { createDomDanmakuRenderer } from '/danmaku/renderers/index.js'
@@ -75,6 +81,9 @@ const fixtureHtml = `<!doctype html>
         resolve(token) {
           if (token === '[ok]') return { src: blobUrl, aspectRatio: 9 / 8 }
           if (token === '[missing]') return { src: '/missing.png', aspectRatio: 2 }
+          if (token === '[trim]') {
+            return { src: blobUrl, aspectRatio: 2, trim: { left: 0.25, right: 0.25 } }
+          }
           return null
         },
       })
@@ -90,6 +99,14 @@ const fixtureHtml = `<!doctype html>
       const plainWidth = width(lanes, 'ab')
       const imageWidth = width(lanes, 'ab[ok]')
       const missingWidth = width(lanes, 'ab[missing]')
+      const trimmedWidth = width(lanes, 'ab[trim]')
+      const gapLanes = createDomDanmakuRenderer({
+        container: document.querySelector('#gap'),
+        reducedMotion: true,
+        textRenderer,
+      })
+      const gapPlainWidth = width(gapLanes, 'ab')
+      const gappedWidth = width(gapLanes, 'ab[trim]')
       const mounts = ['ab[ok]', 'ab[missing]', 'ab[unknown]'].map((text, lane) => ({
         message: message(text, text),
         lane,
@@ -123,6 +140,9 @@ const fixtureHtml = `<!doctype html>
         plainWidth,
         imageWidth,
         missingWidth,
+        trimmedWidth,
+        gapPlainWidth,
+        gappedWidth,
         mountedWidth: okNode.getBoundingClientRect().width,
         loadedImage: { width: loadedBox.width, height: loadedBox.height },
         missingImage: {

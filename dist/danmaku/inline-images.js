@@ -3,6 +3,7 @@ export const DEFAULT_MAX_INLINE_IMAGES = 16;
 export const EMOJI_PATTERN = /[#*0-9]\uFE0F?\u20E3|\p{Regional_Indicator}{2}|\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0F)?(?:\u200D\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0F)?)*/gu;
 const IMAGE_SIZE = 'var(--liveflow-danmaku-image-size, 1.2em)';
 const IMAGE_ALIGN = `var(--liveflow-danmaku-image-align, calc(0.35em - ${IMAGE_SIZE} / 2))`;
+const IMAGE_GAP = 'var(--liveflow-danmaku-image-gap, 0px)';
 export function createInlineImageRenderer(options) {
     const pattern = options.pattern;
     if (!(pattern instanceof RegExp) || !pattern.global) {
@@ -40,16 +41,22 @@ export function createInlineImageRenderer(options) {
             if (resolved === null)
                 return null;
             const ratio = resolved.aspectRatio ?? 1;
+            const left = resolved.trim?.left ?? 0;
+            const right = resolved.trim?.right ?? 0;
             const src = safeUrl(reducedMotion(document) ? (resolved.stillSrc ?? resolved.src) : resolved.src, document);
-            if (src === null || !Number.isFinite(ratio) || ratio <= 0)
+            const valid = ratio > 0 && ratio < Infinity && left >= 0 && right >= 0 && left + right < 1;
+            if (src === null || !valid)
                 return failed(token);
+            const width = `${IMAGE_SIZE} * ${String(ratio)}`;
             const image = document.createElement('img');
             image.className = 'liveflow-danmaku__image';
             image.alt = resolved.alt ?? token;
             image.decoding = 'async';
             image.draggable = false;
             image.style.display = 'inline-block';
-            image.style.width = `calc(${IMAGE_SIZE} * ${String(ratio)})`;
+            image.style.width = `calc(${width})`;
+            image.style.marginLeft = `calc(${IMAGE_GAP} - ${width} * ${String(left)})`;
+            image.style.marginRight = `calc(${IMAGE_GAP} - ${width} * ${String(right)})`;
             image.style.height = IMAGE_SIZE;
             image.style.objectFit = 'contain';
             image.style.verticalAlign = IMAGE_ALIGN;

@@ -4,6 +4,10 @@ export interface InlineImage {
     readonly stillSrc?: string;
     readonly alt?: string;
     readonly aspectRatio?: number;
+    readonly trim?: {
+        readonly left?: number;
+        readonly right?: number;
+    };
 }
 export interface InlineImageRendererOptions {
     readonly pattern: RegExp;

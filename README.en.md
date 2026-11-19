@@ -231,7 +231,7 @@ and never statically pulls in an engine or a player runtime.
 | `@babywbx/liveflow/continuity`            | Continuity controller and player adapter contract                   | 5.6 KiB |  6 KiB |
 | `@babywbx/liveflow/danmaku`               | Bounded danmaku scheduler                                           | 6.8 KiB |  7 KiB |
 | `@babywbx/liveflow/danmaku/dom`           | Safe structured DOM renderer and color helpers                      | 3.3 KiB |  4 KiB |
-| `@babywbx/liveflow/danmaku/inline-images` | Inline images in danmaku text (emotes, animations, emoji; optional) | 1.1 KiB |  2 KiB |
+| `@babywbx/liveflow/danmaku/inline-images` | Inline images in danmaku text (emotes, animations, emoji; optional) | 1.2 KiB |  2 KiB |
 | `@babywbx/liveflow/overlay`               | Realtime event engine and shared budget coordinator                 | 6.2 KiB |  8 KiB |
 | `@babywbx/liveflow/overlay/banner`        | Event banner presenter (optional)                                   | 4.2 KiB |  5 KiB |
 | `@babywbx/liveflow/chrome`                | Player chrome visibility controller                                 | 1.5 KiB |  2 KiB |
