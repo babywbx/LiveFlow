@@ -285,7 +285,18 @@ export function createDomDanmakuRenderer(options) {
         }
         const text = document.createElement('span');
         text.className = 'liveflow-danmaku__text';
-        text.textContent = truncateGraphemeSafe(message.text, maxTextLength);
+        const value = truncateGraphemeSafe(message.text, maxTextLength);
+        if (options.textRenderer === undefined) {
+            text.textContent = value;
+        }
+        else {
+            try {
+                options.textRenderer.render(value, text);
+            }
+            catch {
+                throw new DanmakuRendererError('text-render');
+            }
+        }
         text.style.color = textColor(message.color);
         root.append(text);
     }

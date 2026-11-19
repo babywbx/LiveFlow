@@ -382,3 +382,48 @@ describe('DOM danmaku renderer lifecycle', () => {
     renderer.destroy()
   })
 })
+
+describe('DOM danmaku text renderer', () => {
+  const message = {
+    id: 'text-hook',
+    receivedAt: 0,
+    text: '123456',
+    mode: 'scroll' as const,
+    priority: 0,
+  }
+
+  it('hands the truncated body text and its node to the text renderer', () => {
+    const fixture = createDomFixture(false, 0)
+    const calls: [string, string][] = []
+    const renderer = createDomDanmakuRenderer({
+      container: fixture.container,
+      maxTextLength: 4,
+      textRenderer: {
+        render(text, container) {
+          calls.push([text, container.className])
+        },
+      },
+    })
+
+    renderer.measure([message])
+
+    expect(calls).toEqual([['1234', 'liveflow-danmaku__text']])
+  })
+
+  it('reports a throwing text renderer as a renderer failure', () => {
+    const fixture = createDomFixture(false, 0)
+    const renderer = createDomDanmakuRenderer({
+      container: fixture.container,
+      textRenderer: {
+        render() {
+          throw new Error('text failed')
+        },
+      },
+    })
+
+    expect(() => renderer.measure([message])).toThrow(
+      expect.objectContaining({ name: 'DanmakuRendererError', phase: 'text-render' }),
+    )
+    expect(() => renderer.destroy()).not.toThrow()
+  })
+})

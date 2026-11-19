@@ -5,4 +5,5 @@ export type {
   DanmakuRenderer,
   DomDanmakuRendererOptions,
   IdentityRenderer,
+  TextRenderer,
 } from './types.js'

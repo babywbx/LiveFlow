@@ -9,6 +9,10 @@ export interface IdentityRenderer {
   render(identity: DanmakuIdentity, container: HTMLElement): Destroyable
 }
 
+export interface TextRenderer {
+  render(text: string, container: HTMLElement): void
+}
+
 export interface DomDanmakuRendererOptions {
   readonly container: HTMLElement
   readonly layout?: DanmakuLayout
@@ -22,6 +26,7 @@ export interface DomDanmakuRendererOptions {
   readonly reducedMotion?: boolean
   readonly assetResolver?: AssetResolver
   readonly identityRenderer?: IdentityRenderer
+  readonly textRenderer?: TextRenderer
   readonly onAssetError?: (assetKey: string) => void
 }
 

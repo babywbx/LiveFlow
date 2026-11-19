@@ -41,7 +41,7 @@ const renderer = createDomDanmakuRenderer({
   .liveflow-danmaku__text
 ```
 
-身份、昵称、分隔符和正文不会拼成 HTML。所有上游文本只赋给 `textContent`。默认身份节点
+身份、昵称、分隔符和正文不会拼成 HTML。默认情况下所有上游文本只赋给 `textContent`。默认身份节点
 把 `label` 和可选的 `Lv.n` 渲染为胶囊内容，使灯牌、用户等级与正文保持不同视觉语义。
 样式类只提供结构接缝；产品侧负责最终的字体、背景、边框和间距。
 
@@ -100,6 +100,16 @@ const renderer = createDomDanmakuRenderer({
 `destroy()`；消息卸载、节点复用和渲染器销毁时都会调用它。
 
 自定义 renderer 是受信任的调用方代码。核心仍不接受 HTML 字符串，也不会执行 metadata。
+
+## 自定义正文渲染
+
+传入 `textRenderer` 后，正文按 `maxTextLength` 截断，再通过
+`textRenderer.render(text, container)` 写进 `.liveflow-danmaku__text`，不再直接赋给
+`textContent`。测量 probe 和挂载节点都走同一个函数，所以 `measure()` 得到的尺寸包含它生成的
+全部内容。生成的节点必须在测量时就有确定尺寸，例如图片要用样式写死宽高。
+
+`render()` 抛错时，渲染器抛出 `phase` 为 `text-render` 的 `DanmakuRendererError`。正文节点随
+消息一起回收，不需要单独清理。
 
 ## Reduced motion
 
