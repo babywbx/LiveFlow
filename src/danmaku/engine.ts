@@ -2,6 +2,7 @@ import { createSystemClock, type FrameHandle } from '../shared/clock.js'
 import { CONTRACT_VERSION } from '../shared/contract.js'
 import type { DiagnosticEvent } from '../shared/diagnostics.js'
 import { ContractVersionMismatchError, type LiveFlowError } from '../shared/errors.js'
+import { insertSorted } from '../shared/insert-sorted.js'
 import {
   DanmakuRendererError,
   InvalidDanmakuConfigurationError,
@@ -189,7 +190,7 @@ export function createDanmakuEngine(options: DanmakuEngineOptions): DanmakuEngin
         return { accepted: false, reason: 'pending-capacity' }
       }
 
-      insertPending(item)
+      insertSorted(pending, item, isBetterForDisplay)
       scheduleFrame()
       return { accepted: true }
     },
@@ -374,18 +375,6 @@ export function createDanmakuEngine(options: DanmakuEngineOptions): DanmakuEngin
     pending.splice(victimIndex, 1)
     recordDrop('pending-capacity')
     return true
-  }
-
-  function insertPending(item: PendingMessage): void {
-    let index = 0
-    while (index < pending.length) {
-      const current = pending[index]
-      if (current !== undefined && isBetterForDisplay(item, current)) {
-        break
-      }
-      index += 1
-    }
-    pending.splice(index, 0, item)
   }
 
   function isRecentDuplicate(message: DanmakuMessage, now: number): boolean {
@@ -960,13 +949,13 @@ function calculateLaneCount(viewport: DanmakuViewport, policy: DanmakuPolicy): n
 }
 
 function pruneRateWindow(times: number[], now: number): void {
-  while (times.length > 0) {
-    const first = times[0]
-    if (first === undefined || now - first < 1_000) {
-      return
-    }
-    times.shift()
+  let expired = 0
+  for (const time of times) {
+    if (now - time < 1_000) break
+    expired += 1
   }
+  if (expired === times.length) times.length = 0
+  else if (expired > 0) times.splice(0, expired)
 }
 
 function shiftTimes(times: number[], duration: number): void {

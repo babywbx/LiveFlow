@@ -1,6 +1,7 @@
 import { createSystemClock } from '../shared/clock.js';
 import { CONTRACT_VERSION } from '../shared/contract.js';
 import { ContractVersionMismatchError } from '../shared/errors.js';
+import { insertSorted } from '../shared/insert-sorted.js';
 import { DanmakuRendererError, InvalidDanmakuConfigurationError, InvalidDanmakuMessageError, NonMonotonicDanmakuClockError, } from './errors.js';
 import { resolveLimits, resolvePolicy, sanitizeMessage, validateRequiredMessageFields, validateViewport, } from './validation.js';
 const MAX_DIAGNOSTIC_CODES = 16;
@@ -125,7 +126,7 @@ export function createDanmakuEngine(options) {
                 recordDrop('pending-capacity');
                 return { accepted: false, reason: 'pending-capacity' };
             }
-            insertPending(item);
+            insertSorted(pending, item, isBetterForDisplay);
             scheduleFrame();
             return { accepted: true };
         },
@@ -303,17 +304,6 @@ export function createDanmakuEngine(options) {
         pending.splice(victimIndex, 1);
         recordDrop('pending-capacity');
         return true;
-    }
-    function insertPending(item) {
-        let index = 0;
-        while (index < pending.length) {
-            const current = pending[index];
-            if (current !== undefined && isBetterForDisplay(item, current)) {
-                break;
-            }
-            index += 1;
-        }
-        pending.splice(index, 0, item);
     }
     function isRecentDuplicate(message, now) {
         if (pending.some((item) => item.message.id === message.id) ||
@@ -806,13 +796,16 @@ function calculateLaneCount(viewport, policy) {
     return Math.max(1, Math.floor(viewport.height / policy.laneHeight));
 }
 function pruneRateWindow(times, now) {
-    while (times.length > 0) {
-        const first = times[0];
-        if (first === undefined || now - first < 1_000) {
-            return;
-        }
-        times.shift();
+    let expired = 0;
+    for (const time of times) {
+        if (now - time < 1_000)
+            break;
+        expired += 1;
     }
+    if (expired === times.length)
+        times.length = 0;
+    else if (expired > 0)
+        times.splice(0, expired);
 }
 function shiftTimes(times, duration) {
     for (let index = 0; index < times.length; index += 1) {

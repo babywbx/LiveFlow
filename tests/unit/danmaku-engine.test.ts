@@ -380,6 +380,30 @@ describe('danmaku engine', () => {
     )
   })
 
+  it('expires only the intake timestamps that reach one second', () => {
+    const clock = new FakeClock()
+    const engine = createDanmakuEngine({
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      renderer: new RecordingRenderer(),
+      viewport: { width: 640, height: 64 },
+      limits: { maxIntakePerSecond: 3 },
+    })
+    engine.push(message('a'))
+    engine.push(message('b'))
+    clock.advanceBy(100)
+    engine.push(message('c'))
+    clock.advanceBy(899)
+    expect(engine.push(message('d'))).toEqual({ accepted: false, reason: 'input-rate' })
+    clock.advanceBy(1)
+    expect(engine.push(message('d')).accepted).toBe(true)
+    expect(engine.push(message('e')).accepted).toBe(true)
+    expect(engine.push(message('f'))).toEqual({ accepted: false, reason: 'input-rate' })
+    clock.advanceBy(100)
+    expect(engine.push(message('f')).accepted).toBe(true)
+    engine.destroy()
+  })
+
   it('rejects oversized text before reading metadata', () => {
     let getterReads = 0
     const metadata: DanmakuMetadata = {

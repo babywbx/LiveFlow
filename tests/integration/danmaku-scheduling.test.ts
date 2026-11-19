@@ -57,6 +57,35 @@ function position(renderer: SizedRenderer, id: string): number {
 }
 
 describe('danmaku scheduling', () => {
+  it('orders pending messages by priority, receipt time and arrival order', () => {
+    const clock = new FakeClock()
+    const renderer = new SizedRenderer()
+    const engine = createDanmakuEngine({
+      contractVersion: CONTRACT_VERSION,
+      clock,
+      renderer,
+      viewport: { width: 640, height: 320 },
+    })
+    for (const [id, priority, receivedAt] of [
+      ['normal', 1, 0],
+      ['first', 2, 5],
+      ['last', 2, 9],
+      ['second', 2, 5],
+      ['earliest', 2, 0],
+    ] as const) {
+      engine.push({ ...message(id), priority, receivedAt })
+    }
+    clock.advanceBy(16)
+    expect(renderer.frames[0]?.mounts.map((item) => item.message.id)).toEqual([
+      'earliest',
+      'first',
+      'second',
+      'last',
+      'normal',
+    ])
+    engine.destroy()
+  })
+
   it('does not overlap a fixed message with a scrolling message in the same track', () => {
     const clock = new FakeClock()
     const renderer = new SizedRenderer()
