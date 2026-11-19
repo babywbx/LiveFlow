@@ -3,42 +3,29 @@ export { normalizeHexColor };
 const DEFAULT_BACKGROUND = '#000000';
 const DEFAULT_FOREGROUND = '#ffffff';
 export function contrastRatio(first, second) {
-    const firstRgb = parseHexColor(first);
-    const secondRgb = parseHexColor(second);
-    if (firstRgb === null || secondRgb === null) {
-        return null;
-    }
-    const firstLuminance = relativeLuminance(firstRgb);
-    const secondLuminance = relativeLuminance(secondRgb);
-    const lighter = Math.max(firstLuminance, secondLuminance);
-    const darker = Math.min(firstLuminance, secondLuminance);
-    return (lighter + 0.05) / (darker + 0.05);
+    const firstColor = normalizeHexColor(first);
+    const secondColor = normalizeHexColor(second);
+    return firstColor === null || secondColor === null ? null : contrast(firstColor, secondColor);
 }
 export function resolveAccessibleTextColor(requested, background = DEFAULT_BACKGROUND, fallback = DEFAULT_FOREGROUND, minimumRatio = 4.5) {
-    const safeBackground = normalizeHexColor(background) ?? DEFAULT_BACKGROUND;
-    const safeFallback = normalizeHexColor(fallback) ?? DEFAULT_FOREGROUND;
-    if (requested === undefined) {
-        return safeFallback;
+    const safeRequested = requested === undefined ? null : normalizeHexColor(requested);
+    if (safeRequested !== null) {
+        const safeBackground = normalizeHexColor(background) ?? DEFAULT_BACKGROUND;
+        if (contrast(safeRequested, safeBackground) >= minimumRatio)
+            return safeRequested;
     }
-    const safeRequested = normalizeHexColor(requested);
-    if (safeRequested === null) {
-        return safeFallback;
-    }
-    const ratio = contrastRatio(safeRequested, safeBackground);
-    return ratio !== null && ratio >= minimumRatio ? safeRequested : safeFallback;
+    return normalizeHexColor(fallback) ?? DEFAULT_FOREGROUND;
 }
-function parseHexColor(input) {
-    const normalized = normalizeHexColor(input);
-    if (normalized === null) {
-        return null;
-    }
-    const red = Number.parseInt(normalized.slice(1, 3), 16);
-    const green = Number.parseInt(normalized.slice(3, 5), 16);
-    const blue = Number.parseInt(normalized.slice(5, 7), 16);
-    return { red, green, blue };
+function contrast(first, second) {
+    const a = relativeLuminance(first);
+    const b = relativeLuminance(second);
+    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 }
 function relativeLuminance(color) {
-    return (0.2126 * linearize(color.red) + 0.7152 * linearize(color.green) + 0.0722 * linearize(color.blue));
+    const rgb = Number.parseInt(color.slice(1), 16);
+    return (0.2126 * linearize(rgb >> 16) +
+        0.7152 * linearize((rgb >> 8) & 255) +
+        0.0722 * linearize(rgb & 255));
 }
 function linearize(channel) {
     const normalized = channel / 255;

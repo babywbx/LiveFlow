@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { DanmakuRendererError } from '../../src/danmaku/index.js'
 import { createDomDanmakuRenderer } from '../../src/danmaku/renderers/index.js'
@@ -191,6 +191,49 @@ describe('DOM danmaku renderer lifecycle', () => {
 
     expect(() => renderer.destroy()).not.toThrow()
     expect(fixture.mediaQuery.removeCalls).toBe(2)
+  })
+
+  it('only writes changed positions and only creates fragments for mounts', () => {
+    const fixture = createDomFixture(false, 0)
+    const fragments = vi.spyOn(fixture.container.ownerDocument, 'createDocumentFragment')
+    const renderer = createDomDanmakuRenderer({ container: fixture.container, reducedMotion: true })
+    renderer.render({
+      timestamp: 0,
+      mounts: [
+        {
+          message: { id: 'a', receivedAt: 0, text: 'a', mode: 'scroll', priority: 0 },
+          lane: 0,
+          width: 120,
+          height: 24,
+          x: 320,
+          y: 0,
+        },
+      ],
+      updates: [],
+      unmounts: [],
+    })
+    const root = fixture.elements.find(
+      (element) => element.className === 'liveflow-danmaku__message',
+    )
+    if (root === undefined) throw new Error('missing mounted root')
+    const writes = vi.fn()
+    Object.defineProperty(root.style, 'transform', { set: writes })
+
+    for (const [timestamp, y] of [
+      [16, 0],
+      [32, 20],
+      [48, 20],
+    ] as const) {
+      renderer.render({
+        timestamp,
+        mounts: [],
+        unmounts: [],
+        updates: [{ id: 'a', x: 320 - timestamp, y }],
+      })
+    }
+    expect(writes.mock.calls).toEqual([['translate3d(100px, 20px, 0)']])
+    expect(fragments).toHaveBeenCalledTimes(1)
+    renderer.destroy()
   })
 
   it('retains a node whose removal must be retried', () => {

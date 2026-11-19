@@ -21,4 +21,10 @@ describe('danmaku colors', () => {
   it('computes the known black and white contrast ratio', () => {
     expect(contrastRatio('#000000', '#ffffff')).toBe(21)
   })
+  it('weights each color channel when enforcing the contrast threshold', () => {
+    expect(contrastRatio('#f00', '#000')).toBeCloseTo(5.252, 8)
+    expect(contrastRatio('#0f0', '#000')).toBeCloseTo(15.304, 8)
+    expect(contrastRatio('#00f', '#000')).toBeCloseTo(2.444, 8)
+    expect(resolveAccessibleTextColor('#00f', '#000', '#ABC')).toBe('#aabbcc')
+  })
 })

@@ -20,6 +20,8 @@ interface DomRecord {
   readonly root: HTMLDivElement
   readonly disposables: { destroy(): void }[]
   width: number
+  x: number
+  y: number
 }
 
 const DEFAULT_MAX_POOL_SIZE = 96
@@ -110,23 +112,11 @@ export function createDomDanmakuRenderer(options: DomDanmakuRendererOptions): Da
           const height = Math.max(1, bounds.height)
           measurements.push({ id: message.id, width, height })
         } catch (error) {
-          const cleanupSucceeded = destroyDisposables(disposables)
-          retainDisposables(disposables)
-          resetElement(probe)
-          if (!cleanupSucceeded) {
-            throw new DanmakuRendererError('identity-destroy')
-          }
-          if (error instanceof Error) {
-            throw error
-          }
+          clearProbe(disposables)
+          if (error instanceof Error) throw error
           throw new DanmakuRendererError('measure')
         }
-        const cleanupSucceeded = destroyDisposables(disposables)
-        retainDisposables(disposables)
-        resetElement(probe)
-        if (!cleanupSucceeded) {
-          throw new DanmakuRendererError('identity-destroy')
-        }
+        clearProbe(disposables)
       }
       return measurements
     },
@@ -136,33 +126,33 @@ export function createDomDanmakuRenderer(options: DomDanmakuRendererOptions): Da
         release(id)
       }
 
-      const fragment = document.createDocumentFragment()
-      for (const item of frame.mounts) {
-        if (active.has(item.message.id)) {
-          throw new InvalidDanmakuMessageError('id')
-        }
-        const record = acquire()
-        if (stack) wrapWithin(record.root, viewport.width)
-        try {
-          populateNode(record.root, item.message, record.disposables)
-        } catch (error) {
-          recycleFailedRecord(record)
-          if (error instanceof Error) {
-            throw error
+      if (frame.mounts.length > 0) {
+        const fragment = document.createDocumentFragment()
+        for (const item of frame.mounts) {
+          if (active.has(item.message.id)) {
+            throw new InvalidDanmakuMessageError('id')
           }
-          throw new DanmakuRendererError('render')
+          const record = acquire()
+          if (stack) wrapWithin(record.root, viewport.width)
+          try {
+            populateNode(record.root, item.message, record.disposables)
+          } catch (error) {
+            recycleFailedRecord(record)
+            if (error instanceof Error) {
+              throw error
+            }
+            throw new DanmakuRendererError('render')
+          }
+          record.width = item.width
+          place(record, item)
+          active.set(item.message.id, record)
+          fragment.append(record.root)
         }
-        record.width = item.width
-        place(record.root, item, record.width)
-        active.set(item.message.id, record)
-        fragment.append(record.root)
-      }
-      if (fragment.childNodes.length > 0) {
         layer.append(fragment)
       }
       for (const update of frame.updates) {
         const record = active.get(update.id)
-        if (record !== undefined) place(record.root, update, record.width)
+        if (record !== undefined) place(record, update)
       }
     },
     resize(nextViewport: DanmakuViewport): void {
@@ -212,18 +202,24 @@ export function createDomDanmakuRenderer(options: DomDanmakuRendererOptions): Da
     },
   }
 
+  function clearProbe(disposables: { destroy(): void }[]): void {
+    const cleanupSucceeded = destroyDisposables(disposables)
+    if (!cleanupSucceeded) retainDisposables(disposables)
+    resetElement(probe)
+    if (!cleanupSucceeded) throw new DanmakuRendererError('identity-destroy')
+  }
+
   function acquire(): DomRecord {
     const pooled = pool.pop()
-    if (pooled !== undefined) {
-      return { root: pooled, disposables: [], width: 0 }
-    }
-    if (active.size + pool.length >= maxPoolSize) {
+    if (pooled === undefined && active.size >= maxPoolSize) {
       throw new CapacityExceededError('danmaku-dom-nodes', maxPoolSize)
     }
     return {
-      root: createRoot(document),
+      root: pooled ?? createRoot(document),
       disposables: [],
       width: 0,
+      x: Number.NaN,
+      y: Number.NaN,
     }
   }
 
@@ -419,13 +415,16 @@ export function createDomDanmakuRenderer(options: DomDanmakuRendererOptions): Da
   }
 
   function place(
-    root: HTMLElement,
+    record: DomRecord,
     position: Pick<DanmakuRenderPosition, 'x' | 'y' | 'restY'>,
-    width: number,
   ): void {
-    const x = reducedMotion && !stack ? Math.max(0, (viewport.width - width) / 2) : position.x
+    const x =
+      reducedMotion && !stack ? Math.max(0, (viewport.width - record.width) / 2) : position.x
     const y = reducedMotion ? (position.restY ?? position.y) : position.y
-    root.style.transform = `translate3d(${String(x)}px, ${String(y)}px, 0)`
+    if (record.x === x && record.y === y) return
+    record.root.style.transform = `translate3d(${String(x)}px, ${String(y)}px, 0)`
+    record.x = x
+    record.y = y
   }
 
   function handleReducedMotionChange(event: MediaQueryListEvent): void {
@@ -530,6 +529,7 @@ function removeElement(element: HTMLElement): boolean {
 }
 
 function destroyDisposables(disposables: { destroy(): void }[]): boolean {
+  if (disposables.length === 0) return true
   let succeeded = true
   for (const disposable of disposables.splice(0)) {
     try {
