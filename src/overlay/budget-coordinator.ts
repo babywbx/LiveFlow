@@ -59,6 +59,7 @@ class BudgetCoordinator implements OverlayBudgetCoordinator {
     released: 0,
   }
   private nextGrantId = 1
+  private allocationRevision = 0
   private destroyed = false
 
   constructor(private readonly limits: OverlayBudgetLimits) {}
@@ -97,8 +98,17 @@ class BudgetCoordinator implements OverlayBudgetCoordinator {
         if (record === undefined) {
           throw new OverlayDestroyedError('budget-registration')
         }
-        record.state = mergeInstanceState(record.state, state)
-        this.rebalance()
+        const next = mergeInstanceState(record.state, state)
+        const previous = record.state
+        record.state = next
+        if (
+          record.grantIds.size > 0 &&
+          (next.visible !== previous.visible ||
+            next.focused !== previous.focused ||
+            next.weight !== previous.weight)
+        ) {
+          this.rebalance()
+        }
       },
       destroy: (): void => {
         if (registrationDestroyed) {
@@ -171,11 +181,12 @@ class BudgetCoordinator implements OverlayBudgetCoordinator {
       return
     }
     this.destroyed = true
-    for (const grant of [...this.grants.values()]) {
+    this.allocationRevision += 1
+    for (const grant of this.grants.values()) {
+      this.grants.delete(grant.id)
       grant.revoke()
       this.counters.released += 1
     }
-    this.grants.clear()
     this.instances.clear()
   }
 
@@ -185,6 +196,7 @@ class BudgetCoordinator implements OverlayBudgetCoordinator {
       return
     }
     this.instances.delete(instanceId)
+    if (instance.grantIds.size === 0) return
     for (const grantId of [...instance.grantIds]) {
       const grant = this.grants.get(grantId)
       if (grant !== undefined) {
@@ -210,6 +222,8 @@ class BudgetCoordinator implements OverlayBudgetCoordinator {
   }
 
   private rebalance(newGrantId?: number): void {
+    if (this.destroyed) return
+    const revision = ++this.allocationRevision
     for (const grant of [...this.grants.values()]) {
       const instance = this.instances.get(grant.instanceId)
       if (instance === undefined || !instance.state.visible) {
@@ -217,6 +231,7 @@ class BudgetCoordinator implements OverlayBudgetCoordinator {
         instance?.grantIds.delete(grant.id)
         grant.revoke()
         this.counters.released += 1
+        if (this.allocationRevision !== revision) return
       }
     }
 
@@ -240,18 +255,22 @@ class BudgetCoordinator implements OverlayBudgetCoordinator {
 
     let fullCards = 0
     let highCostAnimations = 0
-    for (const grant of ranked) {
-      const canUseFullSlot = fullCards < this.limits.maxFullCards
-      const canUseHighCostSlot =
-        !grant.request.highCost || highCostAnimations < this.limits.maxHighCostAnimations
-      if (canUseFullSlot && canUseHighCostSlot) {
+    const full = ranked.map((grant) => {
+      const fits =
+        fullCards < this.limits.maxFullCards &&
+        (!grant.request.highCost || highCostAnimations < this.limits.maxHighCostAnimations)
+      if (fits) {
         fullCards += 1
-        if (grant.request.highCost) {
-          highCostAnimations += 1
-        }
-        this.setPresentation(grant, 'full', newGrantId)
-      } else {
-        this.setPresentation(grant, 'compact', newGrantId)
+        if (grant.request.highCost) highCostAnimations += 1
+      }
+      return fits
+    })
+    // Downgrade before promoting so callbacks never see limits exceeded
+    for (const promote of [false, true]) {
+      for (const [index, grant] of ranked.entries()) {
+        if (full[index] !== promote) continue
+        if (this.allocationRevision !== revision) return
+        this.setPresentation(grant, promote ? 'full' : 'compact', newGrantId)
       }
     }
   }

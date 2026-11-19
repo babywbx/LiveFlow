@@ -19,6 +19,7 @@ class BudgetCoordinator {
         released: 0,
     };
     nextGrantId = 1;
+    allocationRevision = 0;
     destroyed = false;
     constructor(limits) {
         this.limits = limits;
@@ -53,8 +54,15 @@ class BudgetCoordinator {
                 if (record === undefined) {
                     throw new OverlayDestroyedError('budget-registration');
                 }
-                record.state = mergeInstanceState(record.state, state);
-                this.rebalance();
+                const next = mergeInstanceState(record.state, state);
+                const previous = record.state;
+                record.state = next;
+                if (record.grantIds.size > 0 &&
+                    (next.visible !== previous.visible ||
+                        next.focused !== previous.focused ||
+                        next.weight !== previous.weight)) {
+                    this.rebalance();
+                }
             },
             destroy: () => {
                 if (registrationDestroyed) {
@@ -122,11 +130,12 @@ class BudgetCoordinator {
             return;
         }
         this.destroyed = true;
-        for (const grant of [...this.grants.values()]) {
+        this.allocationRevision += 1;
+        for (const grant of this.grants.values()) {
+            this.grants.delete(grant.id);
             grant.revoke();
             this.counters.released += 1;
         }
-        this.grants.clear();
         this.instances.clear();
     }
     removeInstance(instanceId) {
@@ -135,6 +144,8 @@ class BudgetCoordinator {
             return;
         }
         this.instances.delete(instanceId);
+        if (instance.grantIds.size === 0)
+            return;
         for (const grantId of [...instance.grantIds]) {
             const grant = this.grants.get(grantId);
             if (grant !== undefined) {
@@ -158,6 +169,9 @@ class BudgetCoordinator {
         this.rebalance();
     }
     rebalance(newGrantId) {
+        if (this.destroyed)
+            return;
+        const revision = ++this.allocationRevision;
         for (const grant of [...this.grants.values()]) {
             const instance = this.instances.get(grant.instanceId);
             if (instance === undefined || !instance.state.visible) {
@@ -165,6 +179,8 @@ class BudgetCoordinator {
                 instance?.grantIds.delete(grant.id);
                 grant.revoke();
                 this.counters.released += 1;
+                if (this.allocationRevision !== revision)
+                    return;
             }
         }
         const ranked = [...this.grants.values()].sort((left, right) => {
@@ -186,18 +202,23 @@ class BudgetCoordinator {
         });
         let fullCards = 0;
         let highCostAnimations = 0;
-        for (const grant of ranked) {
-            const canUseFullSlot = fullCards < this.limits.maxFullCards;
-            const canUseHighCostSlot = !grant.request.highCost || highCostAnimations < this.limits.maxHighCostAnimations;
-            if (canUseFullSlot && canUseHighCostSlot) {
+        const full = ranked.map((grant) => {
+            const fits = fullCards < this.limits.maxFullCards &&
+                (!grant.request.highCost || highCostAnimations < this.limits.maxHighCostAnimations);
+            if (fits) {
                 fullCards += 1;
-                if (grant.request.highCost) {
+                if (grant.request.highCost)
                     highCostAnimations += 1;
-                }
-                this.setPresentation(grant, 'full', newGrantId);
             }
-            else {
-                this.setPresentation(grant, 'compact', newGrantId);
+            return fits;
+        });
+        for (const promote of [false, true]) {
+            for (const [index, grant] of ranked.entries()) {
+                if (full[index] !== promote)
+                    continue;
+                if (this.allocationRevision !== revision)
+                    return;
+                this.setPresentation(grant, promote ? 'full' : 'compact', newGrantId);
             }
         }
     }
