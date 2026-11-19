@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   ChromeVisibilityDestroyedError,
@@ -64,6 +64,27 @@ describe('chrome visibility', () => {
     unsubscribe()
     chrome.pointerEnter()
     expect(transitions).toEqual([true, false])
+  })
+
+  it('extends the idle deadline without replacing the timer on every pointer move', () => {
+    const clock = new FakeClock()
+    const schedule = vi.spyOn(clock, 'setTimeout')
+    const cancel = vi.spyOn(clock, 'clearTimeout')
+    const chrome = createChromeVisibility({ clock, idleHideMs: 2_500 })
+
+    chrome.pointerEnter()
+    for (let count = 0; count < 120; count += 1) {
+      clock.advanceBy(8)
+      chrome.pointerMove()
+    }
+    expect(schedule).toHaveBeenCalledTimes(1)
+    clock.advanceBy(2_499)
+    expect(chrome.getSnapshot().visible).toBe(true)
+    clock.advanceBy(1)
+    expect(chrome.getSnapshot().visible).toBe(false)
+    expect(schedule).toHaveBeenCalledTimes(2)
+    expect(cancel).not.toHaveBeenCalled()
+    expect(clock.pendingTaskCount()).toBe(0)
   })
 
   it('keeps chrome visible while a pin is open and resumes the timer after unpin', () => {
@@ -228,17 +249,16 @@ describe('chrome visibility', () => {
     expect(seen).toEqual([true])
   })
 
-  it('keeps a failed timer cancellation retryable during rescheduling', () => {
+  it('keeps a failed timer cancellation retryable when the pointer leaves', () => {
     const clock = new FlakyTimerClock()
     const chrome = createChromeVisibility({ clock })
 
     chrome.pointerEnter()
-    expect(() => chrome.pointerMove()).toThrow('timer cancellation failed')
+    expect(() => chrome.pointerLeave()).toThrow('timer cancellation failed')
     expect(clock.pendingTaskCount()).toBe(1)
 
-    expect(() => chrome.pointerMove()).not.toThrow()
-    expect(clock.pendingTaskCount()).toBe(1)
-    clock.advanceBy(DEFAULT_CHROME_IDLE_HIDE_MS)
+    expect(() => chrome.pointerLeave()).not.toThrow()
+    expect(clock.pendingTaskCount()).toBe(0)
     expect(chrome.getSnapshot().visible).toBe(false)
   })
 

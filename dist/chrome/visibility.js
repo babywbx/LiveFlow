@@ -20,6 +20,7 @@ class DefaultChromeVisibilityController {
     listeners = new Set();
     destroyed = false;
     focusWithin = false;
+    hideAt = 0;
     hideTimer = null;
     pinCount = 0;
     pointerInside = false;
@@ -143,18 +144,30 @@ class DefaultChromeVisibilityController {
         }
     }
     scheduleHide() {
-        this.cancelHide();
+        if (!this.visible || this.isHeld()) {
+            this.cancelHide();
+            return;
+        }
+        this.hideAt = this.clock.now() + this.idleHideMs;
+        if (this.hideTimer === null) {
+            this.armHide(this.idleHideMs);
+        }
+    }
+    armHide(delayMs) {
+        this.hideTimer = this.clock.setTimeout(this.onHideTimer, Math.min(delayMs, 2_147_483_647));
+    }
+    onHideTimer = () => {
+        this.hideTimer = null;
         if (!this.visible || this.isHeld()) {
             return;
         }
-        this.hideTimer = this.clock.setTimeout(() => {
-            this.hideTimer = null;
-            if (this.isHeld()) {
-                return;
-            }
-            this.setVisible(false);
-        }, this.idleHideMs);
-    }
+        const remaining = this.hideAt - this.clock.now();
+        if (remaining > 0) {
+            this.armHide(remaining);
+            return;
+        }
+        this.setVisible(false);
+    };
     cancelHide() {
         if (this.hideTimer === null) {
             return;

@@ -39,6 +39,7 @@ class DefaultChromeVisibilityController implements ChromeVisibilityController {
   private readonly listeners = new Set<ChromeVisibilitySnapshotListener>()
   private destroyed = false
   private focusWithin = false
+  private hideAt = 0
   private hideTimer: TimerHandle | null = null
   private pinCount = 0
   private pointerInside = false
@@ -194,19 +195,32 @@ class DefaultChromeVisibilityController implements ChromeVisibilityController {
   }
 
   private scheduleHide(): void {
-    this.cancelHide()
     if (!this.visible || this.isHeld()) {
+      this.cancelHide()
       return
     }
 
-    this.hideTimer = this.clock.setTimeout(() => {
-      this.hideTimer = null
-      if (this.isHeld()) {
-        return
-      }
+    this.hideAt = this.clock.now() + this.idleHideMs
+    if (this.hideTimer === null) {
+      this.armHide(this.idleHideMs)
+    }
+  }
 
-      this.setVisible(false)
-    }, this.idleHideMs)
+  private armHide(delayMs: number): void {
+    this.hideTimer = this.clock.setTimeout(this.onHideTimer, Math.min(delayMs, 2_147_483_647))
+  }
+
+  private readonly onHideTimer = (): void => {
+    this.hideTimer = null
+    if (!this.visible || this.isHeld()) {
+      return
+    }
+    const remaining = this.hideAt - this.clock.now()
+    if (remaining > 0) {
+      this.armHide(remaining)
+      return
+    }
+    this.setVisible(false)
   }
 
   private cancelHide(): void {
