@@ -229,11 +229,11 @@ and never statically pulls in an engine or a player runtime.
 | ----------------------------------------- | ------------------------------------------------------------------- | ------: | -----: |
 | `@babywbx/liveflow`                       | `CONTRACT_VERSION`, shared types, typed errors                      |       — |      — |
 | `@babywbx/liveflow/continuity`            | Continuity controller and player adapter contract                   | 5.6 KiB |  6 KiB |
-| `@babywbx/liveflow/danmaku`               | Bounded danmaku scheduler                                           | 6.7 KiB |  7 KiB |
+| `@babywbx/liveflow/danmaku`               | Bounded danmaku scheduler                                           | 6.8 KiB |  7 KiB |
 | `@babywbx/liveflow/danmaku/dom`           | Safe structured DOM renderer and color helpers                      | 3.3 KiB |  4 KiB |
 | `@babywbx/liveflow/danmaku/inline-images` | Inline images in danmaku text (emotes, animations, emoji; optional) | 1.1 KiB |  2 KiB |
-| `@babywbx/liveflow/overlay`               | Realtime event engine and shared budget coordinator                 | 6.0 KiB |  8 KiB |
-| `@babywbx/liveflow/overlay/banner`        | Event banner presenter (optional)                                   | 4.3 KiB |  5 KiB |
+| `@babywbx/liveflow/overlay`               | Realtime event engine and shared budget coordinator                 | 6.2 KiB |  8 KiB |
+| `@babywbx/liveflow/overlay/banner`        | Event banner presenter (optional)                                   | 4.2 KiB |  5 KiB |
 | `@babywbx/liveflow/chrome`                | Player chrome visibility controller                                 | 1.5 KiB |  2 KiB |
 | `@babywbx/liveflow/multiview`             | Multiview grid layout math and grid track contract                  | 0.9 KiB |  2 KiB |
 | `@babywbx/liveflow/native-video`          | Native `<video>` adapter                                            | 3.6 KiB |  4 KiB |
@@ -244,7 +244,7 @@ and never statically pulls in an engine or a player runtime.
 | `@babywbx/liveflow/xgplayer`              | XGPlayer-like seam with no static player dependency                 | 3.5 KiB |  4 KiB |
 
 Measured minified and gzipped by `pnpm size:check`, which fails CI on any regression past the
-budget column. The four core subpaths combined measure 19,977 bytes (19.5 KiB) against a 20 KiB ceiling.
+budget column. The four core subpaths combined measure 20,197 bytes (19.7 KiB) against a 20 KiB ceiling.
 
 <div align="right">
 

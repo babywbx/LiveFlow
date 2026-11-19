@@ -224,11 +224,11 @@ overlay.submit({
 | ----------------------------------------- | ------------------------------------------- | ------: | ----: |
 | `@babywbx/liveflow`                       | `CONTRACT_VERSION`、共享类型与类型化错误    |       — |     — |
 | `@babywbx/liveflow/continuity`            | 连续性控制器与播放器 adapter 契约           | 5.6 KiB | 6 KiB |
-| `@babywbx/liveflow/danmaku`               | 有界弹幕调度核心                            | 6.7 KiB | 7 KiB |
+| `@babywbx/liveflow/danmaku`               | 有界弹幕调度核心                            | 6.8 KiB | 7 KiB |
 | `@babywbx/liveflow/danmaku/dom`           | 安全结构化 DOM renderer 与颜色工具          | 3.3 KiB | 4 KiB |
 | `@babywbx/liveflow/danmaku/inline-images` | 弹幕行内图片（表情、动图、emoji，按需加载） | 1.1 KiB | 2 KiB |
-| `@babywbx/liveflow/overlay`               | 实时事件引擎与共享预算协调器                | 6.0 KiB | 8 KiB |
-| `@babywbx/liveflow/overlay/banner`        | 事件横幅呈现器（可选，按需加载）            | 4.3 KiB | 5 KiB |
+| `@babywbx/liveflow/overlay`               | 实时事件引擎与共享预算协调器                | 6.2 KiB | 8 KiB |
+| `@babywbx/liveflow/overlay/banner`        | 事件横幅呈现器（可选，按需加载）            | 4.2 KiB | 5 KiB |
 | `@babywbx/liveflow/chrome`                | 播放器控件显隐控制器（空闲隐藏与常驻）      | 1.5 KiB | 2 KiB |
 | `@babywbx/liveflow/multiview`             | 多路宫格布局数学与网格轨道声明              | 0.9 KiB | 2 KiB |
 | `@babywbx/liveflow/native-video`          | 原生 `<video>` adapter                      | 3.6 KiB | 4 KiB |
@@ -239,7 +239,7 @@ overlay.submit({
 | `@babywbx/liveflow/xgplayer`              | 零静态播放器依赖的 XGPlayer-like seam       | 3.5 KiB | 4 KiB |
 
 体积由 `pnpm size:check` 压缩后 gzip 实测，超过预算列即 CI 失败。四个核心子路径合并实测
-19,977 字节（19.5 KiB），上限为 20 KiB。
+20,197 字节（19.7 KiB），上限为 20 KiB。
 
 <div align="right">
 
