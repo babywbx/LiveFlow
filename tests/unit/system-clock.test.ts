@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createSystemClock } from '../../src/shared/clock.js'
+import { createSystemClock, createSystemFrameClock } from '../../src/shared/clock.js'
 import { CapacityExceededError } from '../../src/shared/errors.js'
 
 describe('system clock', () => {
@@ -46,6 +46,38 @@ describe('system clock', () => {
       expect(() => clock.setTimeout(noop, 1)).toThrow(CapacityExceededError)
     } finally {
       vi.useRealTimers()
+    }
+  })
+
+  it('keeps frame capacity reserved until native cancellation succeeds', () => {
+    let nextNativeHandle = 41
+    const request = vi.fn(function (this: unknown): number {
+      expect(this).toBe(globalThis)
+      return nextNativeHandle++
+    })
+    const cancel = vi.fn(function (this: unknown, nativeHandle: number): void {
+      expect(this).toBe(globalThis)
+      expect(nativeHandle).toBe(41)
+    })
+    cancel.mockImplementationOnce(() => {
+      throw new Error('cancel failed')
+    })
+    vi.stubGlobal('requestAnimationFrame', request)
+    vi.stubGlobal('cancelAnimationFrame', cancel)
+    try {
+      const clock = createSystemFrameClock()
+      const handler = (): void => {}
+      const first = clock.requestFrame(handler)
+      for (let index = 1; index < 256; index += 1) clock.requestFrame(handler)
+
+      expect(() => clock.cancelFrame(first)).toThrow('cancel failed')
+      expect(() => clock.requestFrame(handler)).toThrow(CapacityExceededError)
+      clock.cancelFrame(first)
+      clock.cancelFrame(first)
+      expect(cancel).toHaveBeenCalledTimes(2)
+      expect(() => clock.requestFrame(handler)).not.toThrow()
+    } finally {
+      vi.unstubAllGlobals()
     }
   })
 })

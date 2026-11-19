@@ -1,4 +1,4 @@
-import { createSystemClock } from '../shared/clock.js';
+import { createSystemFrameClock } from '../shared/clock.js';
 import { AssetResolutionError } from '../shared/errors.js';
 import { InvalidOverlayConfigurationError, InvalidOverlayEventError, OverlayCleanupError, OverlayDestroyedError, } from './errors.js';
 import { fitBannerText, normalizeBannerText, smallestBannerFontSize, validateBannerFontSizes, } from './event-banner-text.js';
@@ -24,7 +24,7 @@ export function createEventBannerPresenter(options) {
     const maxActiveBanners = resolveLimit(options.maxActiveBanners, DEFAULT_EVENT_BANNER_LIMITS.maxActiveBanners, MAX_EVENT_BANNER_LIMITS.maxActiveBanners, 'maxActiveBanners');
     const maxTextLength = resolveLimit(options.maxTextLength, DEFAULT_EVENT_BANNER_LIMITS.maxTextLength, MAX_EVENT_BANNER_LIMITS.maxTextLength, 'maxTextLength');
     const reducedMotion = options.reducedMotion === true;
-    const clock = options.clock ?? createSystemClock();
+    const clock = options.clock ?? createSystemFrameClock();
     const measure = (text, fontSize) => surface.measureText(text, fontSize, layout.font);
     const active = new Set();
     let destroyed = false;

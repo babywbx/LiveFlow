@@ -11,5 +11,8 @@ export interface RandomSource {
     next(): number;
 }
 export type TimerClock = Pick<Clock, 'now' | 'setTimeout' | 'clearTimeout'>;
+type FrameClock = Pick<Clock, 'now' | 'requestFrame' | 'cancelFrame'>;
 export declare function createSystemTimerClock(): TimerClock;
+export declare function createSystemFrameClock(): FrameClock;
 export declare function createSystemClock(): Clock;
+export {};

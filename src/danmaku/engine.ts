@@ -1,4 +1,4 @@
-import { createSystemClock, type FrameHandle } from '../shared/clock.js'
+import { createSystemFrameClock, type FrameHandle } from '../shared/clock.js'
 import { CONTRACT_VERSION } from '../shared/contract.js'
 import type { DiagnosticEvent } from '../shared/diagnostics.js'
 import { ContractVersionMismatchError, type LiveFlowError } from '../shared/errors.js'
@@ -90,7 +90,7 @@ export function createDanmakuEngine(options: DanmakuEngineOptions): DanmakuEngin
   const stack = options.layout === 'stack'
   const limits = resolveLimits(options.limits)
   let policy = resolvePolicy(options.policy)
-  const clock = options.clock ?? createSystemClock()
+  const clock = options.clock ?? createSystemFrameClock()
   const renderer = options.renderer
   let viewport: DanmakuViewport = { ...options.viewport }
   let laneCount = calculateLaneCount(viewport, policy)

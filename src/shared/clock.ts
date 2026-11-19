@@ -18,25 +18,31 @@ export interface RandomSource {
 
 export type TimerClock = Pick<Clock, 'now' | 'setTimeout' | 'clearTimeout'>
 
-function systemTimers(frames?: ReadonlyMap<number, () => void>): {
-  clock: TimerClock
-  allocateHandle: () => number
-} {
-  const maxActiveHandles = 256
-  const timers = new Map<number, ReturnType<typeof globalThis.setTimeout>>()
-  let nextHandle = 1
+type FrameClock = Pick<Clock, 'now' | 'requestFrame' | 'cancelFrame'>
+type Timers = Map<number, ReturnType<typeof globalThis.setTimeout>>
+type Frames = Map<number, () => void>
 
-  function allocateHandle(): number {
-    if (timers.size + (frames?.size ?? 0) >= maxActiveHandles) {
+function now(): number {
+  return globalThis.performance.now()
+}
+
+function handleAllocator(
+  handles: ReadonlyMap<number, unknown>,
+  other?: ReadonlyMap<number, unknown>,
+): () => number {
+  const maxActiveHandles = 256
+  let nextHandle = 1
+  return (): number => {
+    if (handles.size + (other?.size ?? 0) >= maxActiveHandles) {
       throw new CapacityExceededError('system-clock-handles', maxActiveHandles)
     }
     return nextHandle++
   }
+}
 
-  const clock: TimerClock = {
-    now(): number {
-      return globalThis.performance.now()
-    },
+function systemTimers(timers: Timers, allocateHandle: () => number): TimerClock {
+  return {
+    now,
     setTimeout(handler: () => void, delayMs: number): TimerHandle {
       const handle = allocateHandle()
       const nativeHandle = globalThis.setTimeout(() => {
@@ -54,23 +60,16 @@ function systemTimers(frames?: ReadonlyMap<number, () => void>): {
       }
     },
   }
-  return { clock, allocateHandle }
 }
 
-export function createSystemTimerClock(): TimerClock {
-  return systemTimers().clock
-}
-
-export function createSystemClock(): Clock {
-  const frames = new Map<number, () => void>()
-  const { clock, allocateHandle } = systemTimers(frames)
+function systemFrames(frames: Frames, allocateHandle: () => number): FrameClock {
   return {
-    ...clock,
+    now,
     requestFrame(handler: (timestampMs: number) => void): FrameHandle {
       const handle = allocateHandle()
       const onFrame = (timestampMs?: number): void => {
         frames.delete(handle)
-        handler(timestampMs ?? clock.now())
+        handler(timestampMs ?? now())
       }
       if (typeof globalThis.requestAnimationFrame === 'function') {
         const nativeHandle = globalThis.requestAnimationFrame(onFrame)
@@ -89,4 +88,21 @@ export function createSystemClock(): Clock {
       }
     },
   }
+}
+
+export function createSystemTimerClock(): TimerClock {
+  const timers: Timers = new Map()
+  return systemTimers(timers, handleAllocator(timers))
+}
+
+export function createSystemFrameClock(): FrameClock {
+  const frames: Frames = new Map()
+  return systemFrames(frames, handleAllocator(frames))
+}
+
+export function createSystemClock(): Clock {
+  const timers: Timers = new Map()
+  const frames: Frames = new Map()
+  const allocateHandle = handleAllocator(timers, frames)
+  return { ...systemTimers(timers, allocateHandle), ...systemFrames(frames, allocateHandle) }
 }

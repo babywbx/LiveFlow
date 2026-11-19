@@ -1,4 +1,4 @@
-import { createSystemClock } from '../shared/clock.js';
+import { createSystemFrameClock } from '../shared/clock.js';
 import { CONTRACT_VERSION } from '../shared/contract.js';
 import { ContractVersionMismatchError } from '../shared/errors.js';
 import { insertSorted } from '../shared/insert-sorted.js';
@@ -28,7 +28,7 @@ export function createDanmakuEngine(options) {
     const stack = options.layout === 'stack';
     const limits = resolveLimits(options.limits);
     let policy = resolvePolicy(options.policy);
-    const clock = options.clock ?? createSystemClock();
+    const clock = options.clock ?? createSystemFrameClock();
     const renderer = options.renderer;
     let viewport = { ...options.viewport };
     let laneCount = calculateLaneCount(viewport, policy);

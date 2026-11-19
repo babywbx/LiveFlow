@@ -1,5 +1,4 @@
-import type { Clock, FrameHandle } from '../shared/clock.js'
-import { createSystemClock } from '../shared/clock.js'
+import { createSystemFrameClock, type FrameHandle } from '../shared/clock.js'
 import type { Destroyable } from '../shared/disposable.js'
 import { AssetResolutionError } from '../shared/errors.js'
 import {
@@ -94,7 +93,7 @@ export function createEventBannerPresenter(
     'maxTextLength',
   )
   const reducedMotion = options.reducedMotion === true
-  const clock: Clock = options.clock ?? createSystemClock()
+  const clock = options.clock ?? createSystemFrameClock()
   const measure = (text: string, fontSize: number): number =>
     surface.measureText(text, fontSize, layout.font)
   const active = new Set<ActiveBanner>()

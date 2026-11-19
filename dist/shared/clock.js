@@ -1,18 +1,20 @@
 import { CapacityExceededError } from './errors.js';
-function systemTimers(frames) {
+function now() {
+    return globalThis.performance.now();
+}
+function handleAllocator(handles, other) {
     const maxActiveHandles = 256;
-    const timers = new Map();
     let nextHandle = 1;
-    function allocateHandle() {
-        if (timers.size + (frames?.size ?? 0) >= maxActiveHandles) {
+    return () => {
+        if (handles.size + (other?.size ?? 0) >= maxActiveHandles) {
             throw new CapacityExceededError('system-clock-handles', maxActiveHandles);
         }
         return nextHandle++;
-    }
-    const clock = {
-        now() {
-            return globalThis.performance.now();
-        },
+    };
+}
+function systemTimers(timers, allocateHandle) {
+    return {
+        now,
         setTimeout(handler, delayMs) {
             const handle = allocateHandle();
             const nativeHandle = globalThis.setTimeout(() => {
@@ -30,21 +32,15 @@ function systemTimers(frames) {
             }
         },
     };
-    return { clock, allocateHandle };
 }
-export function createSystemTimerClock() {
-    return systemTimers().clock;
-}
-export function createSystemClock() {
-    const frames = new Map();
-    const { clock, allocateHandle } = systemTimers(frames);
+function systemFrames(frames, allocateHandle) {
     return {
-        ...clock,
+        now,
         requestFrame(handler) {
             const handle = allocateHandle();
             const onFrame = (timestampMs) => {
                 frames.delete(handle);
-                handler(timestampMs ?? clock.now());
+                handler(timestampMs ?? now());
             };
             if (typeof globalThis.requestAnimationFrame === 'function') {
                 const nativeHandle = globalThis.requestAnimationFrame(onFrame);
@@ -64,4 +60,18 @@ export function createSystemClock() {
             }
         },
     };
+}
+export function createSystemTimerClock() {
+    const timers = new Map();
+    return systemTimers(timers, handleAllocator(timers));
+}
+export function createSystemFrameClock() {
+    const frames = new Map();
+    return systemFrames(frames, handleAllocator(frames));
+}
+export function createSystemClock() {
+    const timers = new Map();
+    const frames = new Map();
+    const allocateHandle = handleAllocator(timers, frames);
+    return { ...systemTimers(timers, allocateHandle), ...systemFrames(frames, allocateHandle) };
 }
